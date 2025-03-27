@@ -1,3 +1,5 @@
 .quarto/
 EvergladesWadingBird/
 *_files/
+/.quarto/
+WaterData/
