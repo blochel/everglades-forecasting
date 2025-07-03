@@ -1,11 +1,10 @@
 library(dplyr)
+library(edenR)
 library(ggplot2)
 library(glue)
 library(readr)
 library(sf)
 library(wader)
-
-source("../edenR/R/download_eden.R")
 
 eden_path <- "WaterData"
 download_eden_depths(eden_path)
