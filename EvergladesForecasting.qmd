@@ -165,9 +165,44 @@ everglades_models_aug <- augment(everglades_models)
 autoplot(everglades_models_aug, count) +
     autolayer(everglades_models_aug, .fitted, color = 'black', linetype = 2) +
     facet_wrap(~species, scales = "free")
-    
+
 ggplot(mapping = aes(x = year, y = count)) +
     geom_line(data = everglades_count_env_data) +
     geom_line(data = everglades_models_aug, mapping = aes(y = .fitted, color = `.model`)) +
-    facet_grid(vars(species), scales = "free_y")
+    facet_grid(vars(species), scales = "free_y") +
+    scale_color_discrete(labels = c("arima_exog", "arima", "tslm"))
+
+ggsave("results/everglades-models.png", height = 6, width = 5)
+```
+
+### Forecasts
+
+```{r}
+# Test-train split: hold out last 5 years
+train_data <- everglades_count_env_data |>
+  filter(year <= max(year) - 5)
+
+test_data <- everglades_count_env_data |>
+  filter(year > max(train_data$year))
+
+# Fit models on training data
+train_models <- model(
+  train_data,
+  arima = ARIMA(count),
+  tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
+  arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
+)
+
+# Generate forecasts for test period
+forecasts <- train_models |>
+  forecast(new_data = test_data)
+
+# Evaluate forecast accuracy
+accuracy_results <- accuracy(forecasts, everglades_count_env_data)
+print(accuracy_results)
+
+autoplot(forecasts, train_data, level = 80, alpha = 0.5) +
+  autolayer(test_data, count, color = 'black')
+
+ggsave("results/everglades-forecasts.png", height = 6, width = 5)
 ```
