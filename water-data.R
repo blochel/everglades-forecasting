@@ -1,3 +1,4 @@
+library(cubelyr) # currently missing from wader after an upstream change
 library(dplyr)
 library(edenR)
 library(ggplot2)

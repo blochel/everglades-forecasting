@@ -9,6 +9,7 @@ library(feasts)
 library(ggh4x)
 library(ggplot2)
 library(mvgam)
+library(readr)
 library(tidyr)
 library(tsibble)
 library(urca)
@@ -31,11 +32,17 @@ download_observations(".")
     * region and use region counts
     * region only returns wcas & enp
 
+## TODO
+
+- test/train split + hind hindcast
+- crps comparison
+- compare coefficients within exog_arima and tslm
+- compare skill of equivalent models at different scales
 
 ## Colony time-series
 
 ```{r}
-max_counts <- tibble(max_counts())
+max_counts <- tibble(max_counts(path = "."))
 max_counts <- max_counts |>
     filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib")) |>
     group_by(colony) |>
@@ -50,7 +57,7 @@ ggplot(max_counts, aes(x = year, y = count, color = species)) +
 #ggsave("results/colony-timeseries.png", height = 26, width = 26)
 ```
 
-## Regions 
+## Regions
 
 ```{r}
 region_counts <- tibble(max_counts(level = "subregion"))
@@ -58,8 +65,8 @@ region_counts <- region_counts |>
     filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib")) |>
     group_by(region) |>
     filter(n_distinct(year) > 10) |>
-    complete(year = full_seq(year, 1), species, fill = list(count = 0)) |>
-    ungroup()
+    ungroup() |>
+    complete(year = full_seq(year, 1), region, species, fill = list(count = 0))
 
 ggplot(region_counts, aes(x = year, y = count, color = species)) +
     geom_point() +
@@ -73,22 +80,21 @@ ggsave("results/region-timeseries.png", height = 26, width = 26)
 
 ### Load covariates
 ```{r}
-# water <- load_datafile("eden_covariates.csv")
-eden_path <- "../water"
-water <- get_eden_covariates(eden_path=eden_path) |>
-    bind_rows(get_eden_covariates(eden_path=eden_path, level="all")) |>
-    bind_rows(get_eden_covariates(eden_path=eden_path, level="wcas")) |>
-    select(year, region=Name, variable, value) |>
-    as.data.frame() |>
-    select(-geometry) |>
-    pivot_wider(names_from="variable", values_from="value") |>
-    mutate(year = as.integer(year)) |>
-    arrange("year", "region")
-region_water <- filter(water, region %in% c(unique(region_counts$region))) |>
-    filter(year < 2024) # 2024 data for birds not yet available
+eden_path <- "WaterData"
+# water <- get_eden_covariates(eden_path=eden_path) |>
+#     bind_rows(get_eden_covariates(eden_path=eden_path, level="all")) |>
+#     bind_rows(get_eden_covariates(eden_path=eden_path, level="wcas")) |>
+#     select(year, region=Name, variable, value) |>
+#     as.data.frame() |>
+#     select(-geometry) |>
+#     pivot_wider(names_from="variable", values_from="value") |>
+#     mutate(year = as.integer(year)) |>
+#     arrange("year", "region")
+water <- read_csv("eden_covariates.csv")
+region_water <- filter(water, region %in% c(unique(region_counts$region)))
 count_env_data <- region_counts |>
     filter(year >= 1991) |> # No water data prior to 1991
-    full_join(region_water, by = c("year", "region")) |>
+    left_join(region_water, by = c("year", "region")) |>
     as_tsibble(key = c(species, region), index = year)
 ```
 
@@ -98,18 +104,19 @@ count_env_data <- region_counts |>
 
 ```{r}
 #region_counts <- as_tsibble(region_counts, key = c(species, region), index = year)
-models <- model(count_env_data,
-                arima = ARIMA(count),
-                arima_exog = ARIMA(count ~ breed_season_depth + dry_days + pre_recession + post_recession),
-                tslm = TSLM(count ~ breed_season_depth + dry_days + pre_recession + post_recession + trend()))
-glance(models)
-models_aug <- augment(models)
-autoplot(models_aug, count) +
-    autolayer(models_aug, .fitted, linetype = 2) +
+region_models <- model(count_env_data,
+  baseline = MEAN(count),
+  arima = ARIMA(count),
+  arima_exog = ARIMA(count ~ breed_season_depth + dry_days + pre_recession + post_recession),
+  tslm = TSLM(count ~ breed_season_depth + dry_days + pre_recession + post_recession + trend()))
+glance(region_models)
+region_models_aug <- augment(region_models)
+autoplot(region_models_aug, count) +
+    autolayer(region_models_aug, .fitted, linetype = 2) +
     facet_grid(vars(species), vars(region), scales = "free")
 ggplot(mapping = aes(x = year, y = count)) +
     geom_line(data = count_env_data) +
-    geom_line(data = models_aug, mapping = aes(y = .fitted, color = `.model`)) +
+    geom_line(data = region_models_aug, mapping = aes(y = .fitted, color = `.model`)) +
     facet_grid2(vars(species), vars(region), scales = "free_y", independent = "y")
 ggsave("results/region-models.png", height = 12, width = 12)
 ```
@@ -135,53 +142,67 @@ ggplot(everglades_counts, aes(x = year, y = count, color = species)) +
 
 ## Everglades wide forecasts
 
-### ARIMA
-
-```{r}
-everglades_counts <- as_tsibble(everglades_counts, key = species, index = year)
-models <- model(everglades_counts, ARIMA(count))
-glance(models)
-models_aug <- augment(models)
-autoplot(models_aug, count) +
-    autolayer(models_aug, .fitted, color = 'black', linetype = 2) +
-    facet_wrap(~species, scales = "free")
-```
-
-### With covariates
-
 #### Load covariates
 ```{r}
-# water <- load_datafile("eden_covariates.csv")
-everglades_water <- filter(water, region == "all") |>
-    filter(year < 2024) # 2024 data for birds not yet available
-count_env_data <- everglades_counts |>
+everglades_water <- filter(water, region == "all")
+everglades_count_env_data <- everglades_counts |>
     filter(year >= 1991) |> # No water data prior to 1991
-    full_join(everglades_water, by = "year") |>
+    left_join(everglades_water, by = "year") |>
     as_tsibble(key = species, index = year)
 ```
 
-#### TSLM
+### Models
 
 ```{r}
-tslm_model <- model(count_env_data, TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + trend()))
-glance(tslm_model)
-tslm_model_aug = augment(tslm_model)
+everglades_models <- model(
+  everglades_count_env_data,
+  ARIMA(count),
+  TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + trend()),
+  ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession)
+)
+glance(everglades_models)
+everglades_models_aug <- augment(everglades_models)
+autoplot(everglades_models_aug, count) +
+    autolayer(everglades_models_aug, .fitted, color = 'black', linetype = 2) +
+    facet_wrap(~species, scales = "free")
 
-autoplot(tslm_model_aug, count) +
-    autolayer(tslm_model_aug, .fitted, color = 'black', linetype = 2) +
-    facet_wrap(~species, scales = "free") +
-    theme(legend.position="none")
+ggplot(mapping = aes(x = year, y = count)) +
+    geom_line(data = everglades_count_env_data) +
+    geom_line(data = everglades_models_aug, mapping = aes(y = .fitted, color = `.model`)) +
+    facet_grid(vars(species), scales = "free_y") +
+    scale_color_discrete(labels = c("arima_exog", "arima", "tslm"))
+
+ggsave("results/everglades-models.png", height = 6, width = 5)
 ```
 
-#### Exog ARIMA
+### Forecasts
 
 ```{r}
-arima_exog_model <- model(count_env_data, ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession))
-glance(arima_exog_model)
-arima_exog_model_aug = augment(arima_exog_model)
+# Test-train split: hold out last 5 years
+train_data <- everglades_count_env_data |>
+  filter(year <= max(year) - 5)
 
-autoplot(arima_exog_model_aug, count) +
-    autolayer(arima_exog_model_aug, .fitted, color = 'black', linetype = 2) +
-    facet_wrap(~species, scales = "free") +
-    theme(legend.position="none")
+test_data <- everglades_count_env_data |>
+  filter(year > max(train_data$year))
+
+# Fit models on training data
+train_models <- model(
+  train_data,
+  arima = ARIMA(count),
+  tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
+  arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
+)
+
+# Generate forecasts for test period
+forecasts <- train_models |>
+  forecast(new_data = test_data)
+
+# Evaluate forecast accuracy
+accuracy_results <- accuracy(forecasts, everglades_count_env_data)
+print(accuracy_results)
+
+autoplot(forecasts, train_data, level = 80, alpha = 0.5) +
+  autolayer(test_data, count, color = 'black')
+
+ggsave("results/everglades-forecasts.png", height = 6, width = 5)
 ```
