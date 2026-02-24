@@ -66,21 +66,68 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
   }
 }
 
-fit_fable_models <- function(data) {
+make_fable_forecasts <- function(train_data, test_data) {
   models <- model(
-    data,
+    train_data,
     baseline = MEAN(count),
     arima = ARIMA(count),
     tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
     arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
   )
+  forecasts <- forecast(models, new_data = test_data)
+  evaluations <- evaluate_fable_forecasts(forecasts, test_data)
+  return(list(forecasts, evaluations))
 }
 
-fit_sliding_window <- function()
+evaluate_fable_forecasts <- function(forecasts, test_data) {
+  metrics <- accuracy(forecasts, test_data, list(crps = CRPS, rmse = RMSE))
+  baselines <- metrics |>
+    filter(.model == "baseline")
+  join_cols <- c(key_vars(test_data), ".type")
+  metrics <- metrics |>
+    left_join(baselines, by = join_cols, suffix = c("", "_baseline")) |>
+    mutate(
+      crps_skill = 1 - crps / crps_baseline,
+      rmse_skill = 1 - rmse / rmse_baseline
+    ) |>
+    select(-.model_baseline)
+}
 
-download_observations(".")
+fit_sliding_window <- function(data, make_forecast, train_years, test_years) {
+  year_min <- min(data$year)
+  year_max <- max(data$year)
+  train_starts <- year_min:(year_max - train_years - test_years + 1)
+  test_starts <- train_starts + train_years
+
+  forecasts <- tibble()
+  metrics <- tibble()
+  for (i in seq_along(train_starts)) {
+    train_data <- data |>
+      filter(year >= train_starts[i] & year < test_starts[i])
+    test_data <- data |>
+      filter(year >= test_starts[i] & year < test_starts[i] + test_years)
+    forecast_and_metrics <- make_forecast(train_data, test_data)
+    keys <- key_vars(forecast_and_metrics[[1]])
+    forecast <- forecast_and_metrics[[1]] |>
+      mutate(test_start = test_starts[i]) |>
+      tsibble(index = year, key = c(keys, test_start))
+    metric <- forecast_and_metrics[[2]] |>
+      mutate(test_start = test_starts[i])
+    forecasts <- bind_rows(forecasts, forecast)
+    metrics <- bind_rows(metrics, metric)
+  }
+  return(list(forecasts, metrics))
+}
+
+#download_observations(".")
 all_data <- get_data("all")
 subregion_data <- get_data("subregion")
 
-all_models <- fit_fable_models(all_data)
-subregion_models <- fit_fable_models(subregion_data)
+year_min <- min(all_data$year)
+year_max <- max(all_data$year)
+train_years <- 20
+test_years <- 2
+train_starts <- year_min:(year_max - train_years - test_years + 1)
+
+all_fable_forecasts <- fit_sliding_window(all_data, make_fable_forecasts, train_years, test_years)
+subregion_fable_forecasts <- fit_sliding_window(subregion_data, make_fable_forecasts, train_years, test_years)
