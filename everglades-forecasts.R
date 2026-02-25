@@ -7,7 +7,6 @@ library(glue)
 library(mvgam)
 library(purrr)
 library(readr)
-library(rsample)
 library(tidyr)
 library(tsibble)
 library(urca)
@@ -107,10 +106,9 @@ fit_sliding_window <- function(data, make_forecast, train_years, test_years) {
     test_data <- data |>
       filter(year >= test_starts[i] & year < test_starts[i] + test_years)
     forecast_and_metrics <- make_forecast(train_data, test_data)
-    keys <- key_vars(forecast_and_metrics[[1]])
     forecast <- forecast_and_metrics[[1]] |>
       mutate(test_start = test_starts[i]) |>
-      tsibble(index = year, key = c(keys, test_start))
+      as_tibble()
     metric <- forecast_and_metrics[[2]] |>
       mutate(test_start = test_starts[i])
     forecasts <- bind_rows(forecasts, forecast)
