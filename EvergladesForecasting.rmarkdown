@@ -1,0 +1,209 @@
+---
+title: "Everglades Forcasting"
+---
+
+```{r}
+library(dplyr)
+library(fable)
+library(feasts)
+library(ggh4x)
+library(ggplot2)
+library(mvgam)
+library(readr)
+library(tidyr)
+library(tsibble)
+library(urca)
+library(wader)
+library(edenR)
+```
+
+```{r}
+download_observations(".")
+```
+
+## Data cleaning/manipulation questions
+
+* How do we want to filter and complete time-series?
+    * Currently checking to see if at least 10 years of observations and then filling all missing data between min and max observed year with zeros
+    * Probably want some logic for this in wader eventually
+* How to handle crossing scales
+    * Wader currently takes colony counts for colony level
+    * For sub region level it aggregates colony counts if no region count exists, but uses region counts if available
+    * region and use region counts
+    * region only returns wcas & enp
+
+## TODO
+
+- test/train split + hind hindcast
+- crps comparison
+- compare coefficients within exog_arima and tslm
+- compare skill of equivalent models at different scales
+
+## Colony time-series
+
+```{r}
+max_counts <- tibble(max_counts(path = "."))
+max_counts <- max_counts |>
+    filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib")) |>
+    group_by(colony) |>
+    filter(n_distinct(year) > 10) |>
+    complete(year = full_seq(year, 1), species, fill = list(count = 0)) |>
+    ungroup()
+
+ggplot(max_counts, aes(x = year, y = count, color = species)) +
+    geom_point() +
+    geom_line() +
+    facet_wrap(~colony, scales = "free")
+#ggsave("results/colony-timeseries.png", height = 26, width = 26)
+```
+
+## Regions
+
+```{r}
+region_counts <- tibble(max_counts(level = "subregion"))
+region_counts <- region_counts |>
+    filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib")) |>
+    group_by(region) |>
+    filter(n_distinct(year) > 10) |>
+    ungroup() |>
+    complete(year = full_seq(year, 1), region, species, fill = list(count = 0))
+
+ggplot(region_counts, aes(x = year, y = count, color = species)) +
+    geom_point() +
+    geom_line() +
+    facet_grid2(vars(species), vars(region), scales = "free", independent = "y")
+```
+
+```{r}
+ggsave("results/region-timeseries.png", height = 26, width = 26)
+```
+
+### Load covariates
+```{r}
+eden_path <- "WaterData"
+# water <- get_eden_covariates(eden_path=eden_path) |>
+#     bind_rows(get_eden_covariates(eden_path=eden_path, level="all")) |>
+#     bind_rows(get_eden_covariates(eden_path=eden_path, level="wcas")) |>
+#     select(year, region=Name, variable, value) |>
+#     as.data.frame() |>
+#     select(-geometry) |>
+#     pivot_wider(names_from="variable", values_from="value") |>
+#     mutate(year = as.integer(year)) |>
+#     arrange("year", "region")
+water <- read_csv("eden_covariates.csv")
+region_water <- filter(water, region %in% c(unique(region_counts$region)))
+count_env_data <- region_counts |>
+    filter(year >= 1991) |> # No water data prior to 1991
+    left_join(region_water, by = c("year", "region")) |>
+    as_tsibble(key = c(species, region), index = year)
+```
+
+### Models
+
+#### Separate models by region
+
+```{r}
+#region_counts <- as_tsibble(region_counts, key = c(species, region), index = year)
+region_models <- model(count_env_data,
+  baseline = MEAN(count),
+  arima = ARIMA(count),
+  arima_exog = ARIMA(count ~ breed_season_depth + dry_days + pre_recession + post_recession),
+  tslm = TSLM(count ~ breed_season_depth + dry_days + pre_recession + post_recession + trend()))
+glance(region_models)
+region_models_aug <- augment(region_models)
+autoplot(region_models_aug, count) +
+    autolayer(region_models_aug, .fitted, linetype = 2) +
+    facet_grid(vars(species), vars(region), scales = "free")
+ggplot(mapping = aes(x = year, y = count)) +
+    geom_line(data = count_env_data) +
+    geom_line(data = region_models_aug, mapping = aes(y = .fitted, color = `.model`)) +
+    facet_grid2(vars(species), vars(region), scales = "free_y", independent = "y")
+ggsave("results/region-models.png", height = 12, width = 12)
+```
+
+#### Single model with regions as replicates
+
+
+
+## Everglades
+
+```{r}
+everglades_counts <- tibble(max_counts(level = "all"))
+everglades_counts <- everglades_counts |>
+    filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib")) |>
+    complete(year = full_seq(year, 1), species, fill = list(count = 0)) |>
+    ungroup()
+
+ggplot(everglades_counts, aes(x = year, y = count, color = species)) +
+    geom_point() +
+    geom_line()
+#ggsave("results/everglades-timeseries.png", height = 26, width = 26)
+```
+
+## Everglades wide forecasts
+
+#### Load covariates
+```{r}
+everglades_water <- filter(water, region == "all")
+everglades_count_env_data <- everglades_counts |>
+    filter(year >= 1991) |> # No water data prior to 1991
+    left_join(everglades_water, by = "year") |>
+    as_tsibble(key = species, index = year)
+```
+
+### Models
+
+```{r}
+everglades_models <- model(
+  everglades_count_env_data,
+  ARIMA(count),
+  TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + trend()),
+  ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession)
+)
+glance(everglades_models)
+everglades_models_aug <- augment(everglades_models)
+autoplot(everglades_models_aug, count) +
+    autolayer(everglades_models_aug, .fitted, color = 'black', linetype = 2) +
+    facet_wrap(~species, scales = "free")
+
+ggplot(mapping = aes(x = year, y = count)) +
+    geom_line(data = everglades_count_env_data) +
+    geom_line(data = everglades_models_aug, mapping = aes(y = .fitted, color = `.model`)) +
+    facet_grid(vars(species), scales = "free_y") +
+    scale_color_discrete(labels = c("arima_exog", "arima", "tslm"))
+
+ggsave("results/everglades-models.png", height = 6, width = 5)
+```
+
+### Forecasts
+
+```{r}
+# Test-train split: hold out last 5 years
+train_data <- everglades_count_env_data |>
+  filter(year <= max(year) - 5)
+
+test_data <- everglades_count_env_data |>
+  filter(year > max(train_data$year))
+
+# Fit models on training data
+train_models <- model(
+  train_data,
+  arima = ARIMA(count),
+  tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
+  arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
+)
+
+# Generate forecasts for test period
+forecasts <- train_models |>
+  forecast(new_data = test_data)
+
+# Evaluate forecast accuracy
+accuracy_results <- accuracy(forecasts, everglades_count_env_data)
+print(accuracy_results)
+
+autoplot(forecasts, train_data, level = 80, alpha = 0.5) +
+  autolayer(test_data, count, color = 'black')
+
+ggsave("results/everglades-forecasts.png", height = 6, width = 5)
+```
+

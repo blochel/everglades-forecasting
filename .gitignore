@@ -3,3 +3,6 @@ EvergladesWadingBird/
 *_files/
 /.quarto/
 WaterData/
+.Rproj.user
+
+**/*.quarto_ipynb

@@ -16,7 +16,7 @@ library(edenR)
 get_data <- function(level, path = ".") {
   counts <- tibble(max_counts(level = level, path = path)) |>
     filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib"))
-
+  
   water <- get_data_water()
   if (level == "all") {
     counts <- counts |>
@@ -97,7 +97,7 @@ fit_sliding_window <- function(data, make_forecast, train_years, test_years) {
   year_max <- max(data$year)
   train_starts <- year_min:(year_max - train_years - test_years + 1)
   test_starts <- train_starts + train_years
-
+  
   forecasts <- tibble()
   metrics <- tibble()
   for (i in seq_along(train_starts)) {
