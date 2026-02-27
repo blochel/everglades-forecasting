@@ -65,32 +65,118 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
   }
 }
 
-make_fable_forecasts <- function(train_data, test_data) {
-  models <- model(
-    train_data,
-    baseline = MEAN(count),
-    arima = ARIMA(count),
-    tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
-    arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
+# make_fable_forecasts <- function(train_data, test_data) {
+#   models <- model(
+#     train_data,
+#     baseline = MEAN(count),
+#     arima = ARIMA(count),
+#     tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
+#     arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
+#   )
+#   forecasts <- forecast(models, new_data = test_data)
+#   evaluations <- evaluate_fable_forecasts(forecasts, test_data)
+#   return(list(forecasts, evaluations))
+# }
+# 
+# evaluate_fable_forecasts <- function(forecasts, test_data) {
+#   metrics <- accuracy(forecasts, test_data, list(crps = CRPS, rmse = RMSE))
+#   baselines <- metrics |>
+#     filter(.model == "baseline")
+#   join_cols <- c(key_vars(test_data), ".type")
+#   metrics <- metrics |>
+#     left_join(baselines, by = join_cols, suffix = c("", "_baseline")) |>
+#     mutate(
+#       crps_skill = 1 - crps / crps_baseline,
+#       rmse_skill = 1 - rmse / rmse_baseline
+#     ) |>
+#     select(-.model_baseline)
+# }
+
+
+
+make_dgam_forecasts <- function(train_data, test_data) {
+  
+  all_species <- unique(c(train_data$species, test_data$species))
+  
+  train_data <- train_data |> 
+    mutate(series = factor(species, levels = all_species))
+  
+  test_data <- test_data |> 
+    mutate(series = factor(species, levels = all_species))
+  
+
+  
+  # Fit baseline
+  baseline_model <- mvgam(
+    formula    = count ~ series,
+    data       = train_data
   )
-  forecasts <- forecast(models, new_data = test_data)
-  evaluations <- evaluate_fable_forecasts(forecasts, test_data)
+  
+  # AR
+  ar_model1 <- mvgam(
+    formula        = count ~ 1,
+    trend_formula  = ~ s(breed_season_depth, trend, bs = "re") +
+      s(dry_days, trend, bs = "re") +
+      s(recession, trend, bs = "re"),
+    trend_model    = AR(),
+    family         = nb(),
+    data           = train_data
+  )
+  
+  
+  
+  baseline_score <- forecast(baseline_model, 
+                             newdata = test_data) |> 
+    score(score = 'crps') 
+  
+  
+  AR_score <- forecast(ar_model1, 
+                       newdata = test_data) |> 
+    score(score = 'crps') 
+  
+  
+  
+  
+  forecasts <- rbind(
+    
+    within(Map(cbind, baseline_score, 
+               species = names(baseline_score), 
+               model = 'baseline'),
+           rm(all_series)) |>
+      bind_rows(),
+    
+    within(Map(cbind, AR_score, 
+               species = names(AR_score), 
+               model = 'AR'),
+           rm(all_series)) |>
+      bind_rows()
+  )
+  
+  
+  evaluations <- evaluate_dgam_forecasts(forecasts, test_data)
   return(list(forecasts, evaluations))
 }
 
-evaluate_fable_forecasts <- function(forecasts, test_data) {
-  metrics <- accuracy(forecasts, test_data, list(crps = CRPS, rmse = RMSE))
-  baselines <- metrics |>
-    filter(.model == "baseline")
-  join_cols <- c(key_vars(test_data), ".type")
-  metrics <- metrics |>
-    left_join(baselines, by = join_cols, suffix = c("", "_baseline")) |>
+evaluate_dgam_forecasts <- function(forecasts, test_data) {
+  
+  baselines <- forecasts |>
+    filter(model == "baseline")
+  models <- forecasts |>
+    filter(model != "baseline")
+  # join_cols <- c(key_vars(test_data), ".type")
+  metrics <- models |>
+    left_join(baselines, by = join_by(eval_horizon, species), 
+              suffix = c("", "_baseline")) |>
     mutate(
-      crps_skill = 1 - crps / crps_baseline,
-      rmse_skill = 1 - rmse / rmse_baseline
+      crps_skill = 1 - score / score_baseline #,
+      # rmse_skill = 1 - rmse / rmse_baseline
     ) |>
-    select(-.model_baseline)
+    select(-model_baseline)
+  
 }
+
+
+
 
 fit_sliding_window <- function(data, make_forecast, train_years, test_years) {
   year_min <- min(data$year)
@@ -127,5 +213,13 @@ train_years <- 20
 test_years <- 2
 train_starts <- year_min:(year_max - train_years - test_years + 1)
 
-all_fable_forecasts <- fit_sliding_window(all_data, make_fable_forecasts, train_years, test_years)
+# all_fable_forecasts <- fit_sliding_window(all_data, make_fable_forecasts, train_years, test_years)
 #subregion_fable_forecasts <- fit_sliding_window(subregion_data, make_fable_forecasts, train_years, test_years)
+
+all_dgam_forecasts <- fit_sliding_window(all_data, 
+                                         make_dgam_forecasts, 
+                                         train_years, 
+                                         test_years)
+
+
+
