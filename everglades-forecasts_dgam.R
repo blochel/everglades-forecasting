@@ -214,6 +214,8 @@ make_dgam_forecasts <- function(train_data, test_data) {
           trend = c(1, 1, 2, 1, 3, 2)
         ),
       
+      # Updated prior distributions for the series-level 
+      # intercepts using brms::prior()
       priors = prior(std_normal(), class = b),
       data = train_data,
       # nb observation model
@@ -281,6 +283,20 @@ make_dgam_forecasts <- function(train_data, test_data) {
 # Calculate skill scores --------------------------------------------------
 
 
+  baseline_scores <- scores |>
+    filter(model == "baseline") |>
+    select(species, crps_baseline = crps)
+  
+  skills <- scores |>
+    left_join(baseline_scores, by = "species") |>
+    mutate(crps_skill = 1 - crps / crps_baseline,
+           rmse_skill = 1 - rmse / rmse_baseline)
+  
+  return(list(predictions = all_preds, metrics = skills))
+}
+
+
+
 
 
 
@@ -296,8 +312,8 @@ evaluate_dgam_forecasts <- function(forecasts, test_data) {
     left_join(baselines, by = join_by(eval_horizon, species), 
               suffix = c("", "_baseline")) |>
     mutate(
-      crps_skill = 1 - score / score_baseline ,
-      rmse_skill = 1 - rmse / rmse_baseline
+      crps_skill = 1 - score / score_baseline #,
+      # rmse_skill = 1 - rmse / rmse_baseline
     ) |>
     select(-model_baseline)
   
