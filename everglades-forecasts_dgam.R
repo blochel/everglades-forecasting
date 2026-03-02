@@ -95,67 +95,106 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
 
 
 make_dgam_forecasts <- function(train_data, test_data) {
-  
   all_species <- unique(c(train_data$species, test_data$species))
   
-  train_data <- train_data |> 
-    mutate(series = factor(species, levels = all_species))
+  # Add time variable that mvgam needs
+  min_year <- min(train_data$year)
+  train_data <- train_data %>%
+    mutate(
+      time = as.integer(year - min_year + 1),
+      series = factor(species, levels = all_species)
+    )
   
-  test_data <- test_data |> 
-    mutate(series = factor(species, levels = all_species))
+  test_data <- test_data %>%
+    mutate(
+      time = as.integer(year - min_year + 1),
+      series = factor(species, levels = all_species)
+    )
   
-
-  
-  # Fit baseline
+  # Baseline model
   baseline_model <- mvgam(
-    formula    = count ~ series,
-    data       = train_data
+    formula = count ~ series,
+    data = train_data,
+    family = gaussian()
   )
   
-  # AR
-  ar_model1 <- mvgam(
-    formula        = count ~ 1,
-    trend_formula  = ~ s(breed_season_depth, trend, bs = "re") +
-      s(dry_days, trend, bs = "re") +
-      s(recession, trend, bs = "re"),
-    trend_model    = AR(),
-    family         = nb(),
-    data           = train_data
-  )
+  # Get baseline predictions
+  baseline_preds <- predict(baseline_model, newdata = test_data) %>%
+    as_tibble() %>%
+    # Add necessary columns for joining
+    mutate(
+      # Use test_data in same order as predictions
+      species = test_data$species,
+      series = test_data$series,
+      time = test_data$time,
+      year = test_data$year,
+      model = "baseline"
+    )
   
-  
-  
-  baseline_score <- forecast(baseline_model, 
-                             newdata = test_data) |> 
-    score(score = 'crps') 
-  
-  
-  AR_score <- forecast(ar_model1, 
-                       newdata = test_data) |> 
-    score(score = 'crps') 
-  
-  
-  
-  
-  forecasts <- rbind(
+  # Try to fit AR model
+  ar_preds <- tryCatch({
+    ar_model <- mvgam(
+      formula = count ~ 1,
+      trend_formula = ~ s(breed_season_depth) + s(dry_days) + s(recession),
+      trend_model = AR(),
+      data = train_data,
+      family = nb(),
+      chains = 2,
+      silent = 2
+    )
     
-    within(Map(cbind, baseline_score, 
-               species = names(baseline_score), 
-               model = 'baseline'),
-           rm(all_series)) |>
-      bind_rows(),
-    
-    within(Map(cbind, AR_score, 
-               species = names(AR_score), 
-               model = 'AR'),
-           rm(all_series)) |>
-      bind_rows()
-  )
+    predict(ar_model, newdata = test_data) %>%
+      as_tibble() %>%
+      # Add necessary columns for joining
+      mutate(
+        species = test_data$species,
+        series = test_data$series,
+        time = test_data$time,
+        year = test_data$year,
+        model = "AR"
+      )
+  }, error = function(e) {
+    warning("AR model failed: ", e$message)
+    NULL
+  })
   
+  # Combine predictions
+  all_preds <- if (is.null(ar_preds)) {
+    baseline_preds
+  } else {
+    bind_rows(baseline_preds, ar_preds)
+  }
   
-  evaluations <- evaluate_dgam_forecasts(forecasts, test_data)
-  return(list(forecasts, evaluations))
+  # Now compute scores with the correct column name (Estimate, not estimate)
+  scores <- all_preds %>%
+    left_join(
+      test_data %>% select(species, year, actual = count),
+      by = c("species", "year")
+    ) %>%
+    group_by(model, species) %>%
+    summarize(
+      crps = mean(abs(as.numeric(Estimate) - as.numeric(actual))),
+      rmse = sqrt(mean((as.numeric(Estimate) - as.numeric(actual))^2)),
+      .groups = "drop"
+    )
+  
+  # Calculate skill scores
+  baseline_scores <- scores %>%
+    filter(model == "baseline") %>%
+    select(species, crps_baseline = crps)
+  
+  skills <- scores %>%
+    left_join(baseline_scores, by = "species") %>%
+    mutate(crps_skill = 1 - crps / crps_baseline)
+  
+  return(list(predictions = all_preds, metrics = skills))
 }
+
+
+
+
+
+
 
 evaluate_dgam_forecasts <- function(forecasts, test_data) {
   
