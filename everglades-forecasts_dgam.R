@@ -263,7 +263,7 @@ make_dgam_forecasts <- function(train_data, test_data) {
 
 
   all_preds <- 
-    bind_rows(baseline_preds, ar_preds, var_preds, trait_preds)
+    bind_rows(baseline_preds, ar_preds, var_preds, trait_preds)                                  #this can go on line 255 ?
   
   
   # Now compute scores with the correct column name (Estimate, not estimate)
@@ -289,8 +289,8 @@ make_dgam_forecasts <- function(train_data, test_data) {
   
   skills <- scores |>
     left_join(baseline_scores, by = "species") |>
-    mutate(crps_skill = 1 - crps / crps_baseline,
-           rmse_skill = 1 - rmse / rmse_baseline)
+    mutate(crps_skill = 1 - crps / crps_baseline)#,
+           #rmse_skill = 1 - rmse / rmse_baseline)
   
   return(list(predictions = all_preds, metrics = skills))
 }
