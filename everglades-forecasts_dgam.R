@@ -65,74 +65,66 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
   }
 }
 
-# make_fable_forecasts <- function(train_data, test_data) {
-#   models <- model(
-#     train_data,
-#     baseline = MEAN(count),
-#     arima = ARIMA(count),
-#     tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
-#     arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
-#   )
-#   forecasts <- forecast(models, new_data = test_data)
-#   evaluations <- evaluate_fable_forecasts(forecasts, test_data)
-#   return(list(forecasts, evaluations))
-# }
-# 
-# evaluate_fable_forecasts <- function(forecasts, test_data) {
-#   metrics <- accuracy(forecasts, test_data, list(crps = CRPS, rmse = RMSE))
-#   baselines <- metrics |>
-#     filter(.model == "baseline")
-#   join_cols <- c(key_vars(test_data), ".type")
-#   metrics <- metrics |>
-#     left_join(baselines, by = join_cols, suffix = c("", "_baseline")) |>
-#     mutate(
-#       crps_skill = 1 - crps / crps_baseline,
-#       rmse_skill = 1 - rmse / rmse_baseline
-#     ) |>
-#     select(-.model_baseline)
-# }
 
+
+
+
+
+
+# dgam forecasts ----------------------------------------------------------
 
 
 make_dgam_forecasts <- function(train_data, test_data) {
   all_species <- unique(c(train_data$species, test_data$species))
-  
-  # Add time variable that mvgam needs
   min_year <- min(train_data$year)
-  train_data <- train_data |>
+  
+  train_data <- train_data %>%
+    mutate(
+      time = as.integer(year - min_year + 1),
+      series = factor(species, levels = all_species)
+    )
+  test_data <- test_data %>%
     mutate(
       time = as.integer(year - min_year + 1),
       series = factor(species, levels = all_species)
     )
   
-  test_data <- test_data |>
-    mutate(
-      time = as.integer(year - min_year + 1),
-      series = factor(species, levels = all_species)
-    )
-  
-  # Baseline model
+  # Baseline model ----------------------------------------------------------
   baseline_model <- mvgam(
     formula = count ~ series,
     data = train_data,
     family = gaussian()
   )
-  
-  # Get baseline predictions
-  baseline_preds <- predict(baseline_model, newdata = test_data) |>
-    as_tibble() |>
-    # Add necessary columns for joining
+  baseline_preds <- predict(baseline_model, newdata = test_data) %>%
+    as_tibble() %>%
     mutate(
-      # Use test_data in same order as predictions
       species = test_data$species,
       series = test_data$series,
       time = test_data$time,
       year = test_data$year,
       model = "baseline"
     )
+  # CRPS scores
+  baseline_fc <- forecast(baseline_model, newdata = test_data)
+  baseline_crps_raw <- score(baseline_fc, score = 'crps')
   
-  # AR model
-  ar_preds <- tryCatch({
+  # Extract scores from the list structure - Remove the "all_series" summary
+  baseline_crps_list <- baseline_crps_raw[names(baseline_crps_raw) != "all_series"]
+  
+  # Combine into a single data frame
+  baseline_crps <- bind_rows(
+    lapply(names(baseline_crps_list), function(sp) {
+      data.frame(
+        species = sp,
+        score = baseline_crps_list[[sp]]$score,
+        eval_horizon = baseline_crps_list[[sp]]$eval_horizon,
+        model = "baseline"
+      )
+    })
+  )
+  
+  # AR model ----------------------------------------------------------------
+  ar_result <- tryCatch({
     ar_model <- mvgam(
       formula = count ~ 1,
       trend_formula = ~ s(breed_season_depth) + s(dry_days) + s(recession),
@@ -142,10 +134,8 @@ make_dgam_forecasts <- function(train_data, test_data) {
       chains = 2,
       silent = 2
     )
-    
-    predict(ar_model, newdata = test_data) |>
-      as_tibble() |>
-      # Add necessary columns for joining
+    ar_pred <- predict(ar_model, newdata = test_data) %>%
+      as_tibble() %>%
       mutate(
         species = test_data$species,
         series = test_data$series,
@@ -153,95 +143,60 @@ make_dgam_forecasts <- function(train_data, test_data) {
         year = test_data$year,
         model = "AR"
       )
+    # Get AR CRPS
+    ar_fc <- forecast(ar_model, newdata = test_data)
+    ar_crps_raw <- score(ar_fc, score = 'crps')
+    ar_crps_list <- ar_crps_raw[names(ar_crps_raw) != "all_series"]
+    
+    ar_crps <- bind_rows(
+      lapply(names(ar_crps_list), function(sp) {
+        data.frame(
+          species = sp,
+          score = ar_crps_list[[sp]]$score,
+          eval_horizon = ar_crps_list[[sp]]$eval_horizon,
+          model = "AR"
+        )
+      })
+    )
+    
+    list(preds = ar_pred, crps = ar_crps)
   }, error = function(e) {
     warning("AR model failed: ", e$message)
     NULL
   })
   
-  # VAR model
-  var_preds <- tryCatch({
-    var_model <- mvgam(
-      formula = count ~ 1,
-      trend_formula = ~ s(breed_season_depth) + s(dry_days) + s(recession),
-      trend_model = VAR(),
-      data = train_data,
-      family = nb(),
-      chains = 2,
-      silent = 2
-    )
-    
-    predict(var_model, newdata = test_data) |>
-      as_tibble() |>
-      # Add necessary columns for joining
-      mutate(
-        species = test_data$species,
-        series = test_data$series,
-        time = test_data$time,
-        year = test_data$year,
-        model = "VAR"
-      )
-  }, error = function(e) {
-    warning("VAR model failed: ", e$message)
-    NULL
-  })
   
-  
-  # trait model
- trait_preds <- tryCatch({
+  # trait -------------------------------------------------------------------
+  trait_result <- tryCatch({
     trait_model <- mvgam(
-      # Observation formula containing species-level intercepts
       formula = count ~ series,
-            # Process model that contains the hierarchical temporal smooths
       trend_formula = ~
-        0 + 
-        s(init_depth,
-          trend,
-          bs = 'sz',
-          xt = list(bs = 'cr'))+
-        s(dry_days, 
-          bs = 'cr') +
-        s(breed_season_depth,
-          trend,
-          bs = 'sz',
-          xt = list(bs = 'cr'))+
-        dry_days 
-      ,
-      trend_model = VAR(), 
-      trend_map =
-        # trend_map forces species to track same /different latent signals
-        data.frame(
-          series = unique(train_data$series),
-          trend = c(1, 1, 2, 1, 3, 2)
-        ),
-      
-      # Updated prior distributions for the series-level 
-      # intercepts using brms::prior()
-      priors = prior(std_normal(), class = b),
-      data = train_data,
-      # nb observation model
+        0 +
+        s(init_depth, bs = 'cr') +
+        s(init_depth, trend, bs = 'sz', xt = list(bs = 'cr')) +
+        s(dry_days, bs = 'cr') +
+        s(breed_season_depth, bs = 'cr') +
+        s(breed_season_depth, trend, bs = 'sz', xt = list(bs = 'cr')) +
+        s(recession, bs = 'cr'),
+      trend_model = VAR(),
+      trend_map = data.frame(
+        series = unique(train_data$series),  # FIX: was data_train
+        trend = c(1, 1, 2, 1, 3, 4)
+      ),
+      priors = prior(std_normal(), class = b),  # FIX: define prior
+      data = train_data,        
       family = nb(),
-      control = list(max_treedepth = 10,   #10 
-                     adapt_delta = 0.9),   #0.8
-      
-      # Each series shares the same nb shape parameter
-      # If TRUE and the family has additional 
-      # family-specific observation parameters (e.g., 
-      # variance components, dispersion parameters), 
-      # these will be shared across all outcome variables. 
-      # Useful when multiple outcomes share properties. 
+      control = list(max_treedepth = 10, adapt_delta = 0.9),
       share_obs_params = TRUE,
-      
-      # Non-centring the latent states tends to improve
-      # performance in State Space models
       noncentred = TRUE,
       backend = 'cmdstanr',
+      chains = 2,              
+      silent = 2,              
       samples = 1500
     )
     
-    
-    predict(trait_model, newdata = test_data) |>
-      as_tibble() |>
-      # Add necessary columns for joining
+    trait_pred <- predict(trait_model, newdata = test_data) %>%
+      as_tibble() %>%
       mutate(
         species = test_data$species,
         series = test_data$series,
@@ -249,75 +204,76 @@ make_dgam_forecasts <- function(train_data, test_data) {
         year = test_data$year,
         model = "trait"
       )
+    
+    # Get trait CRPS
+    trait_fc <- forecast(trait_model, newdata = test_data)
+    trait_crps_raw <- score(trait_fc, score = 'crps')
+    trait_crps_list <- trait_crps_raw[names(trait_crps_raw) != "all_series"]
+    
+    trait_crps <- bind_rows(
+      lapply(names(trait_crps_list), function(sp) {
+        data.frame(
+          species = sp,
+          score = trait_crps_list[[sp]]$score,
+          eval_horizon = trait_crps_list[[sp]]$eval_horizon,
+          model = "trait"
+        )
+      })
+    )
+    
+    list(preds = trait_pred, crps = trait_crps)
   }, error = function(e) {
     warning("trait model failed: ", e$message)
     NULL
   })
   
   
- 
- 
- 
-
-# Combine predictions -------------------------------------------------
-
-
-  all_preds <- 
-    bind_rows(baseline_preds, ar_preds, var_preds, trait_preds)                                  #this can go on line 255 ?
   
   
-  # Now compute scores with the correct column name (Estimate, not estimate)
-  scores <- all_preds |>
-    left_join(
-      test_data |> select(species, year, actual = count),
-      by = c("species", "year")
-    ) |>
-    group_by(model, species) |>
+  
+  # Combine predictions
+  all_preds <- bind_rows(
+    baseline_preds,
+    if (!is.null(ar_result)) ar_result$preds else NULL,
+    if (!is.null(trait_result)) trait_result$preds else NULL
+  )
+  
+  all_scores <- bind_rows(
+    baseline_crps,
+    if (!is.null(ar_result)) ar_result$crps else NULL,
+    if (!is.null(trait_result)) trait_result$crps else NULL
+  )
+  
+  # Calculate skill scores
+  baseline_summary <- all_scores %>%
+    filter(model == "baseline") %>%
+    group_by(species) %>%
+    summarize(crps_baseline = mean(score), .groups = "drop")
+  
+  skills <- all_scores %>%
+    left_join(baseline_summary, by = "species") %>%
+    group_by(model, species) %>%
     summarize(
-      crps = mean(abs(as.numeric(Estimate) - as.numeric(actual))),
-      rmse = sqrt(mean((as.numeric(Estimate) - as.numeric(actual))^2)),
+      crps = mean(score),
+      crps_baseline = first(crps_baseline),
+      crps_skill = 1 - (crps / crps_baseline),
       .groups = "drop"
     )
-  
-
-# Calculate skill scores --------------------------------------------------
-
-
-  baseline_scores <- scores |>
-    filter(model == "baseline") |>
-    select(species, crps_baseline = crps)
-  
-  skills <- scores |>
-    left_join(baseline_scores, by = "species") |>
-    mutate(crps_skill = 1 - crps / crps_baseline)#,
-           #rmse_skill = 1 - rmse / rmse_baseline)
   
   return(list(predictions = all_preds, metrics = skills))
 }
 
-
-
-
-
-
-
-evaluate_dgam_forecasts <- function(forecasts, test_data) {
   
-  baselines <- forecasts |>
-    filter(model == "baseline")
-  models <- forecasts |>
-    filter(model != "baseline")
-  # join_cols <- c(key_vars(test_data), ".type")
-  metrics <- models |>
-    left_join(baselines, by = join_by(eval_horizon, species), 
-              suffix = c("", "_baseline")) |>
-    mutate(
-      crps_skill = 1 - score / score_baseline #,
-      # rmse_skill = 1 - rmse / rmse_baseline
-    ) |>
-    select(-model_baseline)
   
-}
+  
+  
+
+
+
+
+
+
+
 
 
 
@@ -364,6 +320,8 @@ all_dgam_forecasts <- fit_sliding_window(all_data,
                                          make_dgam_forecasts, 
                                          train_years, 
                                          test_years)
+
+
 
 
 
