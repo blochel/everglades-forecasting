@@ -175,7 +175,7 @@ make_dgam_forecasts <- function(train_data, test_data) {
     ar_exog_model <- mvgam(
       formula = count ~ 1,
       trend_formula = ~  breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days,
-      trend_model = ar_exog(),
+      trend_model = AR(),
       data = train_data,
       family = nb(),
       chains = 2,
