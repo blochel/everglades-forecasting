@@ -275,7 +275,7 @@ make_dgam_forecasts <- function(train_data, test_data) {
   })
   
   
-  ar_exog_result
+
   
   
   # Combine predictions
@@ -363,18 +363,16 @@ train_years <- 20
 test_years <- 2
 train_starts <- year_min:(year_max - train_years - test_years + 1)
 
-# all_fable_forecasts <- fit_sliding_window(all_data, make_fable_forecasts, train_years, test_years)
-#subregion_fable_forecasts <- fit_sliding_window(subregion_data, make_fable_forecasts, train_years, test_years)
 
 all_dgam_forecasts <- fit_sliding_window(all_data, 
                                          make_dgam_forecasts, 
                                          train_years, 
                                          test_years)
 
-subregion_dgam_forecasts <- fit_sliding_window(subregion_data, 
-                                               make_dgam_forecasts, 
-                                               train_years, 
-                                               test_years)
+# subregion_dgam_forecasts <- fit_sliding_window(subregion_data, 
+#                                                make_dgam_forecasts, 
+#                                                train_years, 
+#                                                test_years)
 
 
 

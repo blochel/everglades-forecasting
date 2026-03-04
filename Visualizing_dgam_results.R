@@ -26,6 +26,7 @@ metrics %>%
   ggplot(aes(x = model, y = crps_skill, fill = model)) +
   geom_boxplot(alpha = 0.7) +
   geom_hline(yintercept = 0, linetype = "dashed") +
+  xlim(-10,1) +
   geom_jitter(aes(color = species), width = 0.05, alpha = 0.5, size = 4) +
   facet_wrap(~species, ncol = 3, 
              scales = "free") +
@@ -41,9 +42,9 @@ metrics %>%
 
 # Overall performance over years
 metrics %>%
-  filter(model != "baseline", 
-         crps_skill > -10) %>% 
+  filter(model != "baseline") %>% 
   ggplot(aes(x = crps_skill, fill = model)) +
   geom_density() +
+  xlim(-10,1) +
   geom_vline(xintercept = 0, linetype = 'dashed')+
   facet_wrap(~species)
