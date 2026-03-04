@@ -165,6 +165,53 @@ make_dgam_forecasts <- function(train_data, test_data) {
     NULL
   })
   
+
+# arima exog ----------------------------------------------------------------
+#from fable models for comparing 
+ 
+  
+  
+  ar_exog_result <- tryCatch({
+    ar_exog_model <- mvgam(
+      formula = count ~ 1,
+      trend_formula = ~  breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days,
+      trend_model = ar_exog(),
+      data = train_data,
+      family = nb(),
+      chains = 2,
+      silent = 2
+    )
+    ar_exog_pred <- predict(ar_exog_model, newdata = test_data) %>%
+      as_tibble() %>%
+      mutate(
+        species = test_data$species,
+        series = test_data$series,
+        time = test_data$time,
+        year_exog = test_data$year_exog,
+        model = "ar_exog"
+      )
+    # Get ar_exog CRPS
+    ar_exog_fc <- forecast(ar_exog_model, newdata = test_data)
+    ar_exog_crps_raw <- score(ar_exog_fc, score = 'crps')
+    ar_exog_crps_list <- ar_exog_crps_raw[names(ar_exog_crps_raw) != "all_series"]
+    
+    ar_exog_crps <- bind_rows(
+      lapply(names(ar_exog_crps_list), function(sp) {
+        data.frame(
+          species = sp,
+          score = ar_exog_crps_list[[sp]]$score,
+          eval_horizon = ar_exog_crps_list[[sp]]$eval_horizon,
+          model = "ar_exog"
+        )
+      })
+    )
+    
+    list(preds = ar_exog_pred, crps = ar_exog_crps)
+  }, error = function(e) {
+    warning("ar_exog model failed: ", e$message)
+    NULL
+  })
+  
   
   # trait -------------------------------------------------------------------
   trait_result <- tryCatch({
@@ -228,20 +275,22 @@ make_dgam_forecasts <- function(train_data, test_data) {
   })
   
   
-  
+  ar_exog_result
   
   
   # Combine predictions
   all_preds <- bind_rows(
     baseline_preds,
     if (!is.null(ar_result)) ar_result$preds else NULL,
-    if (!is.null(trait_result)) trait_result$preds else NULL
+    if (!is.null(trait_result)) trait_result$preds else NULL, 
+    if (!is.null(trait_result)) ar_exog_result$preds else NULL
   )
   
   all_scores <- bind_rows(
     baseline_crps,
     if (!is.null(ar_result)) ar_result$crps else NULL,
-    if (!is.null(trait_result)) trait_result$crps else NULL
+    if (!is.null(trait_result)) trait_result$crps else NULL, 
+    if (!is.null(trait_result)) ar_exog_result$crps else NULL
   )
   
   # Calculate skill scores
@@ -303,9 +352,10 @@ fit_sliding_window <- function(data, make_forecast, train_years, test_years) {
   return(list(forecasts, metrics))
 }
 
+
 # download_observations(".")
 all_data <- get_data("all")
-# subregion_data <- get_data("subregion")
+subregion_data <- get_data("subregion")
 
 year_min <- min(all_data$year)
 year_max <- max(all_data$year)
@@ -321,6 +371,10 @@ all_dgam_forecasts <- fit_sliding_window(all_data,
                                          train_years, 
                                          test_years)
 
+subregion_dgam_forecasts <- fit_sliding_window(subregion_data, 
+                                               make_dgam_forecasts, 
+                                               train_years, 
+                                               test_years)
 
 
 
