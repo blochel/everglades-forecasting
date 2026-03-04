@@ -93,7 +93,7 @@ make_dgam_forecasts <- function(train_data, test_data) {
   baseline_model <- mvgam(
     formula = count ~ series,
     data = train_data,
-    family = gaussian()
+    family = nb()
   )
   baseline_preds <- predict(baseline_model, newdata = test_data) %>%
     as_tibble() %>%

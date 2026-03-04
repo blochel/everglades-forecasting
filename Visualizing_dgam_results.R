@@ -9,39 +9,41 @@ library('dplyr')
 
 forecasts <- all_dgam_forecasts[[1]]
 metrics <- all_dgam_forecasts[[2]]
+library(ggplot2)
+library(dplyr)
 
-# model performance across species
+# Join with actual data
+forecast_plot_data <- forecasts %>%
+  left_join(
+    all_data %>% select(species, year, actual = count),
+    by = c("species", "year")
+  )
+
+
+# Overall performance distribution
 metrics %>%
-  filter(model == "AR") %>%
-  ggplot(aes(x = reorder(species, crps_skill), y = crps_skill)) +
-  geom_col(fill = "steelblue") +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  filter(model != "baseline") %>%  # Remove extreme outliers for visualization
+  ggplot(aes(x = model, y = crps_skill, fill = model)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_jitter(aes(color = species), width = 0.05, alpha = 0.5, size = 4) +
+  facet_wrap(~species, ncol = 3, 
+             scales = "free") +
   coord_flip() +
+  labs(title = "CRPS Skill Distribution Across All Test Windows",
+       y = "CRPS Skill Score",
+       x = "Model") +
   theme_minimal() +
-  labs(title = "Forecast Skill by Species", 
-       x = "Species", 
-       y = "CRPS Skill Score (higher is better)")
-
-# predictions vs observationsper specific species
-forecasts %>%
-  filter(species == "gbhe") %>%  # Change to species of interest
-  ggplot(aes(x = year)) +
-  geom_line(aes(y = actual, color = "Observed"), size = 1) +
-  geom_line(aes(y = Estimate, color = "Predicted", linetype = model), size = 1) +
-  geom_ribbon(aes(ymin = Q2.5, ymax = Q97.5, fill = model), alpha = 0.2) +
-  theme_minimal() +
-  labs(title = "Predictions vs Observations for Great Blue Heron", 
-       y = "Count", 
-       color = "Data")
+  theme(legend.position = "bottom")
 
 
 
 
-# compare windows  --------------------------------------------------------
-
+# Overall performance over years
 metrics %>%
-  group_by(test_start, model) %>%
-  summarize(avg_skill = mean(crps_skill, na.rm = TRUE)) %>%
-  ggplot(aes(x = test_start, y = avg_skill, color = model)) +
-  geom_line() +
-  geom_point()
+  filter(model != "baseline", 
+         crps_skill > -10) %>% 
+  ggplot(aes(x = crps_skill, fill = model)) +
+  geom_density() +
+  geom_vline(xintercept = 0, linetype = 'dashed')+
+  facet_wrap(~species)
