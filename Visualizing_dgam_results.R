@@ -5,12 +5,13 @@
 
 library('ggplot2')
 library('dplyr')
-
+forecast_fable <- all_fable_forecasts[[1]]
+metrics_fable <- all_fable_forecasts[[2]]
 
 forecasts <- all_dgam_forecasts[[1]]
 metrics <- all_dgam_forecasts[[2]]
-library(ggplot2)
-library(dplyr)
+
+
 
 # Join with actual data
 forecast_plot_data <- forecasts %>%
@@ -43,8 +44,17 @@ metrics %>%
 # Overall performance over years
 metrics %>%
   filter(model != "baseline") %>% 
-  ggplot(aes(x = crps_skill, fill = model)) +
-  geom_density() +
-  xlim(-10,1) +
+  ggplot(aes(x = as.numeric(crps_skill), color = model)) +
+  geom_density(alpha = 0.2, linewidth = 1) +
+  xlim(-2,1) +
+  geom_vline(xintercept = 0, linetype = 'dashed')+
+  facet_wrap(~species)
+
+
+metrics_fable %>% 
+  ggplot(aes(x = as.numeric(1 - crps / crps_baseline), color = .model)) +
+  geom_density(alpha = 0.2, linewidth = 1) +
+  xlim(-2,1) +
+  ylim(0, 2.5)+
   geom_vline(xintercept = 0, linetype = 'dashed')+
   facet_wrap(~species)
