@@ -187,7 +187,7 @@ make_dgam_forecasts <- function(train_data, test_data) {
         species = test_data$species,
         series = test_data$series,
         time = test_data$time,
-        year_exog = test_data$year_exog,
+        year = test_data$year,
         model = "ar_exog"
       )
     # Get ar_exog CRPS
@@ -277,20 +277,21 @@ make_dgam_forecasts <- function(train_data, test_data) {
   
 
   
-  
-  # Combine predictions
+
+# Combine predictions -----------------------------------------------------
+
   all_preds <- bind_rows(
     baseline_preds,
     if (!is.null(ar_result)) ar_result$preds else NULL,
     if (!is.null(trait_result)) trait_result$preds else NULL, 
-    if (!is.null(trait_result)) ar_exog_result$preds else NULL
+    if (!is.null(ar_exog_result)) ar_exog_result$preds else NULL
   )
   
   all_scores <- bind_rows(
     baseline_crps,
     if (!is.null(ar_result)) ar_result$crps else NULL,
     if (!is.null(trait_result)) trait_result$crps else NULL, 
-    if (!is.null(trait_result)) ar_exog_result$crps else NULL
+    if (!is.null(ar_exog_result)) ar_exog_result$crps else NULL
   )
   
   # Calculate skill scores
@@ -316,7 +317,32 @@ make_dgam_forecasts <- function(train_data, test_data) {
   
   
   
+make_fable_forecasts <- function(train_data, test_data) {
+  models <- model(
+    train_data,
+    baseline = MEAN(count),
+    arima = ARIMA(count),
+    tslm = TSLM(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days + trend()),
+    arima_exog = ARIMA(count ~ breed_season_depth + breed_season_depth^2 + pre_recession + post_recession + recession + dry_days)
+  )
+  forecasts <- forecast(models, new_data = test_data)
+  evaluations <- evaluate_fable_forecasts(forecasts, test_data)
+  return(list(forecasts, evaluations))
+}
 
+evaluate_fable_forecasts <- function(forecasts, test_data) {
+  metrics <- accuracy(forecasts, test_data, list(crps = CRPS, rmse = RMSE))
+  baselines <- metrics |>
+    filter(.model == "baseline")
+  join_cols <- c(key_vars(test_data), ".type")
+  metrics <- metrics |>
+    left_join(baselines, by = join_cols, suffix = c("", "_baseline")) |>
+    mutate(
+      crps_skill = 1 - crps / crps_baseline,
+      rmse_skill = 1 - rmse / rmse_baseline
+    ) |>
+    select(-.model_baseline)
+}
 
 
 
@@ -368,6 +394,12 @@ all_dgam_forecasts <- fit_sliding_window(all_data,
                                          make_dgam_forecasts, 
                                          train_years, 
                                          test_years)
+
+all_fable_forecasts <- fit_sliding_window(all_data, 
+                                          make_fable_forecasts, 
+                                          train_years, 
+                                          test_years)
+
 
 # subregion_dgam_forecasts <- fit_sliding_window(subregion_data, 
 #                                                make_dgam_forecasts, 
