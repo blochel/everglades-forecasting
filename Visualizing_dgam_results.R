@@ -58,3 +58,58 @@ metrics_fable %>%
   ylim(0, 2.5)+
   geom_vline(xintercept = 0, linetype = 'dashed')+
   facet_wrap(~species)
+
+
+
+
+
+# compare fable and dgam --------------------------------------------------
+
+# Combine metrics 
+compare_models <- function(metrics, metrics_fable) {
+  # Standardize fable metrics to match mvgam format
+  fable_standardized <- metrics_fable %>%
+    rename(model = .model) %>%
+    select(model, species, crps, crps_baseline, crps_skill, test_start)
+  
+  # mvgam metrics should already have the right structure
+  dgam_standardized <- metrics %>%
+    select(model, species, crps, crps_baseline, crps_skill, test_start)
+  
+  # Combine
+  all_metrics <- bind_rows(dgam_standardized, fable_standardized)
+  
+  # Summarize across test windows
+  summary <- all_metrics %>%
+    group_by(model, species) %>%
+    summarize(
+      mean_crps = mean(crps),
+      mean_skill = mean(crps_skill),
+      sd_skill = sd(crps_skill),
+      .groups = "drop"
+    ) %>%
+    arrange(species, desc(mean_skill))
+  
+  return(list(detailed = all_metrics, summary = summary))
+}
+
+
+comparison <- compare_models(
+  all_dgam_forecasts[[2]]%>%
+    filter(model != "baseline"),  # metrics
+  all_fable_forecasts[[2]]  # metrics
+) 
+
+
+print(comparison$summary)
+
+# plot
+ggplot(comparison$summary, aes(x = model, 
+                               y = as.numeric(mean_skill), 
+                               fill = model)) +
+  geom_col() +
+  facet_wrap(~species) +
+  labs(y = "Mean CRPS Skill Score", x = "Model") +
+  theme_minimal() +
+  ylim(-2,1) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
