@@ -183,6 +183,8 @@ autoplot(forecasts, all_data) +
 
 
 
+test_data_ordinal <- test_data |>
+  mutate(count_category = cut(count, breaks = breaks, labels = categories, ordered = TRUE))
 
 #Convert observed categories to numeric (1, 2, 3, 4), this keeps 
 #the ordinal structure of the data. 
@@ -215,6 +217,12 @@ rps_by_model <- forecasts_probs |>
 
 
 rps_by_model
+
+
+
+
+
+
 
 
 oridnal_fable_skillscore <- rps_by_model |>
