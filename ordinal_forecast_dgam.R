@@ -184,7 +184,8 @@ autoplot(forecasts, all_data) +
 
 
 test_data_ordinal <- test_data |>
-  mutate(count_category = cut(count, breaks = breaks, labels = categories, ordered = TRUE))
+  mutate(count_category = cut(count, breaks = breaks, labels = categories, 
+                              ordered = TRUE))
 
 #Convert observed categories to numeric (1, 2, 3, 4), this keeps 
 #the ordinal structure of the data. 
