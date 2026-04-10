@@ -122,8 +122,7 @@ join_cols <- c(key_vars(test_data), ".type")
 evaluations <- metrics |>
   left_join(baselines, by = join_cols, suffix = c("", "_baseline")) |>
   mutate(
-    crps_skill = 1 - crps / crps_baseline,
-    rmse_skill = 1 - rmse / rmse_baseline
+    crps_skill = 1 - crps / crps_baseline
   ) |>
   dplyr::select(-.model_baseline)
 
@@ -153,24 +152,38 @@ library(verification)
 library(distributional)
 
 # Define category breaks
+train_data |>
+  as_tibble() |>
+  group_by(species) |>
+  summarise(
+    q33 = quantile(count, 0.33, na.rm = TRUE),
+    q67 = quantile(count, 0.67, na.rm = TRUE),
+    mean = mean(count, na.rm = TRUE),
+    median = median(count, na.rm = TRUE), 
+    q50 = quantile(count, 0.5, na.rm = TRUE) #confirm that median =q50
+  )
 
-low <- 100
-medium <- 500
-high <- 2000
+quantiles_train_data <- train_data |>
+  as_tibble() |>
+  group_by(species) |>
+  summarise(
+    low = quantile(count, 0.33, na.rm = TRUE),
+    medium = quantile(count, 0.5, na.rm = TRUE),
+    high = quantile(count, 0.67, na.rm = TRUE)
+  )
 
-breaks <- c(-Inf, 100, 500, 2000, Inf)
-categories <- c("Low", "Medium", "High", "Very High")
 
 # Calculate probabilities for each category from the Normal distributions
 forecasts_probs <- forecasts |>
-  as_tibble() |>
+  as_tibble() |>  
+  left_join(quantiles_train_data, by = "species") |>
   rowwise() |>
   mutate(
     var = variance(count),
     prob_low = pnorm(low, mean = .mean, sd = sqrt(var)),
     prob_medium = pnorm(medium, mean = .mean, sd = sqrt(var)) - prob_low,
-    prob_high = pnorm(high, mean = .mean, sd = sqrt(var)) - pnorm(500, mean = .mean, sd = sqrt(var)),
-    prob_very_high = 1 - pnorm(2000, mean = .mean, sd = sqrt(var))
+    prob_high = pnorm(high, mean = .mean, sd = sqrt(var)) - pnorm(medium, mean = .mean, sd = sqrt(var)),
+    prob_very_high = 1 - pnorm(high, mean = .mean, sd = sqrt(var))
   ) |>
   ungroup()
 
@@ -184,8 +197,20 @@ autoplot(forecasts, all_data) +
 
 
 test_data_ordinal <- test_data |>
-  mutate(count_category = cut(count, breaks = breaks, labels = categories, 
-                              ordered = TRUE))
+  as_tibble() |>
+  left_join(quantiles_train_data, by = "species") |>
+  rowwise() |>
+  mutate(
+    count_category = cut(count, 
+                         breaks = c(-Inf, low, medium, high, Inf), 
+                         labels = c("Low", "Medium", "High", "Very High"),
+                         ordered = TRUE)
+  ) |>
+  ungroup()
+
+# test_data_ordinal <- test_data |>
+#   mutate(count_category = cut(count, breaks = breaks, labels = categories, 
+#                               ordered = TRUE))
 
 #Convert observed categories to numeric (1, 2, 3, 4), this keeps 
 #the ordinal structure of the data. 
@@ -200,7 +225,6 @@ rps_by_model <- forecasts_probs |>
   group_by(.model, species) |>
   summarise(
     rps = {
-      # Get observations for current species
       current_species <- unique(species)
       obs_species <- test_data_ordinal |>
         filter(species == current_species) |>
@@ -272,40 +296,51 @@ autoplot(forecasts, all_data) +
 
 
 # Create data frame for ordinal categories
-ordinal_categories <- tibble(
-  category = factor(c("Low", "Medium", "High", "Very High"), 
-                    levels = c("Low", "Medium", "High", "Very High")),
-  ymin = c(0, 100, 500, 2000),
-  ymax = c(100, 500, 2000, 10000),
-  fill_color = c("#d7191c", "#fdae61", "#ffffbf", "#1a9641")
-)
+ordinal_categories <- quantiles_train_data |>
+  rowwise() |>
+  mutate(
+    categories = list(
+      tibble(
+        category = factor(c("Low", "Medium", "High", "Very High"), 
+                          levels = c("Low", "Medium", "High", "Very High")),
+        ymin = c(0, low, medium, high),
+        ymax = c(low, medium, high, Inf)
+      )
+    )
+  ) |>
+  unnest(categories) |>
+  ungroup() |>
+  dplyr::select(species, category, ymin, ymax)
 
-# Manual plot with thicker lines
+
+
+
+
 ggplot() +
   geom_rect(data = ordinal_categories,
             aes(xmin = -Inf, xmax = Inf, ymin = ymin, ymax = ymax, fill = category),
             alpha = 0.3) +
-  geom_line(data = as_tibble(all_data), aes(x = year, y = count), linewidth = 1.2) +
-  geom_line(data = as_tibble(forecasts), aes(x = year, y = .mean, color = .model), linewidth = 1.2) +
+  geom_line(data = as_tibble(all_data), aes(x = year, y = count), linewidth = 1) +
   geom_ribbon(data = forecasts |> hilo(level = 95) |> unpack_hilo(`95%`),
-              aes(x = year, ymin = `95%_lower`, ymax = `95%_upper`, fill = .model),
-              alpha = 0.2) +
-  scale_fill_manual(values = c("Low" = "#d7191c", 
-                               "Medium" = "#fdae61", 
-                               "High" = "#ffffbf", 
-                               "Very High" = "#1a9641"),
-                    name = "Count Category",
-                    labels = c("Low (0-100)", "Medium (100-500)", 
-                               "High (500-2000)", "Very High (>2000)")) +
+              aes(x = year, ymin = `95%_lower`, ymax = `95%_upper`, group = .model),
+              alpha = 0.2, fill = "gray50") +
+  geom_line(data = as_tibble(forecasts), aes(x = year, y = .mean, color = .model), linewidth = 1) +
+  scale_fill_manual(values = c("Low" = "red",        
+                               "Medium" = "yellow",      
+                               "High" = "lightgreen",        
+                               "Very High" = "darkgreen"),
+                    name = "Count Category") +
+  scale_color_manual(values = c("baseline" = "steelblue1",
+                                "arima" = "blue",      
+                                "tslm" = "darkblue",       
+                                "arima_exog" = "steelblue"), 
+                     name = "Model") +
   facet_grid(species ~ .model, scales = "free_y") +
   coord_cartesian(ylim = c(0, NA), expand = TRUE) +
-  labs(title = "Species and Model",
-       x = "Year", y = "Count",
-       color = "Model") +
+  labs(title = "Forecasts by Species and Model",
+       x = "Year", y = "Count") +
   theme_minimal() +
   guides(fill = guide_legend(override.aes = list(alpha = 0.5)))
-
-
 
 
 
