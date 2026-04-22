@@ -5,35 +5,43 @@ library(tidyr)
 library(tsibble)
 library(wader)  
 
-get_data_water <- function(eden_path = "WaterData", update = FALSE) {
-  if (!file.exists("eden_covariates.csv")) {
-    cat("Creating dummy water data for testing...\n")
-    cat("WARNING: Replace with real EDEN data for actual analysis!\n\n")
-    
-    # Create dummy water data with realistic ranges
-    years <- 1991:2025
-    regions <- c("all", "WCA1", "WCA2A", "WCA2B", "WCA3A", "WCA3B", "ENP", "BCNP", "SHNP")
-    
-    water <- expand_grid(
-      year = years,
-      region = regions
-    ) |>
-      mutate(
-        breed_season_depth = runif(n(), 0, 100),
-        dry_days = runif(n(), 0, 100),
-        recession = runif(n(), -50, 50),
-        init_depth = runif(n(), 0, 100),
-        pre_recession = runif(n(), 0, 50),
-        post_recession = runif(n(), 0, 50)
-      )
-    
-    write_csv(water, "eden_covariates.csv")
-    cat("Saved dummy eden_covariates.csv\n")
-  }
+
+
+get_data <- function(level, path = ".") {
+  counts <- tibble(max_counts(level = level, path = path)) |>
+    filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib"))
   
-  water <- read_csv("eden_covariates.csv", show_col_types = FALSE)
-  return(water)
+  water <- get_data_water()
+  if (level == "all") {
+    counts <- counts |>
+      complete(year = full_seq(year, 1), species, fill = list(count = 0)) |>
+      ungroup()
+    water <- filter(water, region == "all")
+    combined <- counts |>
+      filter(year >= 1991) |> # No water data prior to 1991
+      left_join(water, by = c("year")) |>
+      as_tsibble(key = c(species), index = year)
+  } else if (level == "subregion") {
+    counts <- counts |>
+      group_by(subregion) |>
+      filter(n_distinct(year) > 10) |>
+      ungroup() |>
+      complete(year = full_seq(year, 1), subregion, species, fill = list(count = 0))
+    water <- filter(water, region %in% c(unique(counts$subregion)))
+    combined <- counts |>
+      filter(year >= 1991) |> # No water data prior to 1991
+      left_join(water, by = join_by(year, subregion == region)) |>
+      mutate(region = subregion) |>
+      dplyr::select(-subregion) |>
+      as_tsibble(key = c(species, region), index = year)
+  } else {
+    warning(glue("Support for {level} not implemented yet"))
+  }
+  return(combined)
 }
+
+
+
 
 get_data_water <- function(eden_path = "WaterData", update = FALSE) {
   if (update) {

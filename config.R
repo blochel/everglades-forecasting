@@ -4,10 +4,10 @@ CONFIG <- list(
     
      mvgam = c(
       "baseline", 
-      "ar", 
-      "ar_exog", 
-      "species_specific",
-      "trait"
+      "ar" 
+    # "ar_exog", 
+    #  "species_specific",
+    #  "trait"
       ),  
     
     
