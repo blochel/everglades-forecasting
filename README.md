@@ -64,12 +64,14 @@ choose
 ## Evaluations
 
 # CRPS (numeric)
+```
 Continuous Ranked Probability Score
 ↓
 Measures: How close is predicted distribution to actual count?
 Lower = Better
-
+```
 # RPS (Ordinal)
+```
 Ranked Probability Score
 ↓
 Step 1: Define categories from training data quantiles
@@ -92,7 +94,7 @@ skill_score = 1 - (model_score / baseline_score)
 > 0: Better than baseline
 = 0: Same as baseline
 < 0: Worse than baseline
-
+```
 
 ## Visualization
 
