@@ -12,7 +12,9 @@ fit_mvgam_trait <- function(train_data, test_data, config) {
         s(breed_season_depth, bs = 'cr') +
         s(breed_season_depth, trend, bs = 'sz', xt = list(bs = 'cr')) +
         s(recession, bs = 'cr'),
-      trend_model = VAR(),
+      
+      trend_model = mvgam::VAR(),
+      
       trend_map = data.frame(
         series = unique(train_data$series),
         trend = c(1, 1, 2, 1, 3, 4)

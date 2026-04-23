@@ -3,6 +3,9 @@
 .RData
 .Rproj.user
 .Rapp.history
+.gitignore
+
+
 
 # Session Data files
 .RData
@@ -24,7 +27,7 @@ results/
 *.jpg
 
 # Data folders to exclude
-evergaldeswadingbird/
+EvergladesWadingBird/
 WaterData/
 
 # System files

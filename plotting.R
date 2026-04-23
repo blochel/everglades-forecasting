@@ -1,4 +1,7 @@
 
+# plotting ----------------------------------------------------------------
+
+
 library(ggplot2)
 library(dplyr)
 library(tidyr)
@@ -111,6 +114,14 @@ plot_fable_results <- function(metrics) {
 
 
 plot_mvgam_results <- function(metrics) {
+  # Check if we have non-baseline models
+  non_baseline_metrics <- metrics |> filter(model != "baseline")
+  
+  if (nrow(non_baseline_metrics) == 0) {
+    cat("Warning: Only baseline model exists. No comparison plots to generate.\n")
+    cat("Available models:", paste(unique(metrics$model), collapse = ", "), "\n")
+    return(invisible(NULL))
+  }
   
   # 1. CRPS Skill over time
   p1 <- ggplot(metrics |> filter(model != "baseline"),
@@ -127,7 +138,7 @@ plot_mvgam_results <- function(metrics) {
     theme(legend.position = "bottom")
   
   print(p1)
-  ggsave("mvgam_crps_skill_over_time.png", p1, width = 12, height = 8)
+  ggsave("results/mvgam_crps_skill_over_time.png", p1, width = 12, height = 8)
   
   # 2. RPS Skill over time (if ordinal evaluation was done)
   if ("rps_skill" %in% names(metrics)) {

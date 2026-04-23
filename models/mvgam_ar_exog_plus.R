@@ -12,7 +12,7 @@ fit_mvgam_ar_exog_plus <- function(train_data, test_data, config) {
         ti(breed_season_depth, dry_days, bs = 'cr', k = 5) +
         ti(breed_season_depth, recession, bs = 'cr', k = 5) +
         ti(init_depth, dry_days, bs = 'cr', k = 5),
-      trend_model = AR(),
+      trend_model = mvgam::AR(),
       data = train_data,
       family = nb(),
       chains = config$chains,

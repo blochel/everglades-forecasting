@@ -1,13 +1,18 @@
+
+# config ------------------------------------------------------------------
+
+
+
 CONFIG <- list(
   models = list(
    
     
      mvgam = c(
       "baseline", 
-      "ar" 
-    # "ar_exog", 
-    #  "species_specific",
-    #  "trait"
+      "ar", 
+      "ar_exog", 
+      "species_specific",
+      "trait"
       ),  
     
     
@@ -17,7 +22,7 @@ CONFIG <- list(
   
   #turn on/off model category 
   run_mvgam = TRUE,                                 # Enable mvgam
-  run_fable = FALSE,                                  # Disable fable for now to test mvgam
+  run_fable = TRUE,                                  # Disable fable for now to test mvgam
   
   use_ordinal = TRUE,                                #  TRUE = RPS, FALSE = CRPS
   data_type = "numeric",                             # "numeric" or "ordinal" - structure of response variable

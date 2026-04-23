@@ -1,11 +1,10 @@
 fit_mvgam_ar <- function(train_data, test_data, config) {
   cat("  Fitting AR model...\n")
-  
   tryCatch({
     model <- mvgam(
-      formula = count ~ 1,
+      formula = count ~ series,
       trend_formula = ~ s(breed_season_depth) + s(dry_days) + s(recession),
-      trend_model = AR(),
+      trend_model = mvgam::AR(p = 1),  
       data = train_data,
       family = nb(),
       chains = config$chains,
