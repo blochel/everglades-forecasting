@@ -4,7 +4,7 @@ library(tsibble)
 library(verification)
 library(dplyr)
 
-make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL, use_ordinal = TRUE) {
+make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL, use_ordinal = TRUE, config = CONFIG, precomputed_breaks = NULL) {
   
   if (is.null(models_to_run)) {
     models_to_run <- c("baseline", "arima", "tslm", "arima_exog")
@@ -41,13 +41,15 @@ make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL, us
     forecasts, 
     test_data, 
     train_data,
-    use_ordinal = use_ordinal
+    use_ordinal = use_ordinal,
+    config = config,
+    precomputed_breaks = precomputed_breaks
   )
   
   return(list(forecasts = forecasts, metrics = evaluations))
 }
 
-evaluate_fable_forecasts <- function(forecasts, test_data, train_data = NULL, use_ordinal = TRUE) {
+evaluate_fable_forecasts <- function(forecasts, test_data, train_data = NULL, use_ordinal = TRUE, config = CONFIG, precomputed_breaks = NULL) {
   # Standard metrics (CRPS, RMSE)
   metrics <- accuracy(forecasts, test_data, list(crps = CRPS, rmse = RMSE))
   
@@ -64,23 +66,29 @@ evaluate_fable_forecasts <- function(forecasts, test_data, train_data = NULL, us
   
   # Ordinal evaluation (RPS)
   if (use_ordinal && !is.null(train_data)) {
-    rps_metrics <- calculate_rps(forecasts, test_data, train_data)
+    rps_metrics <- calculate_rps(forecasts, test_data, train_data, config = config, precomputed_breaks = precomputed_breaks)
     metrics <- metrics |> left_join(rps_metrics, by = c(".model", "species"))
   }
   
   return(metrics)
 }
 
-calculate_rps <- function(forecasts, test_data, train_data) {
-  quantiles_by_species <- train_data |>
-    as_tibble() |>
-    group_by(species) |>
-    summarise(
-      low = quantile(count, 0.33, na.rm = TRUE),
-      medium = quantile(count, 0.50, na.rm = TRUE),
-      high = quantile(count, 0.67, na.rm = TRUE),
-      .groups = "drop"
-    )
+calculate_rps <- function(forecasts, test_data, train_data, config = CONFIG, precomputed_breaks = NULL) {
+  # Use precomputed breaks (full dataset) or compute from training window
+  if (!is.null(precomputed_breaks)) {
+    quantiles_by_species <- precomputed_breaks
+  } else {
+    quantiles_by_species <- train_data |>
+      as_tibble() |>
+      filter_ordinal_years(config$ordinal_years) |>
+      group_by(species) |>
+      summarise(
+        low = quantile(count, config$ordinal_breaks[1], na.rm = TRUE),
+        medium = quantile(count, config$ordinal_breaks[2], na.rm = TRUE),
+        high = quantile(count, config$ordinal_breaks[3], na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
   
   forecasts_probs <- forecasts |>
     as_tibble() |>

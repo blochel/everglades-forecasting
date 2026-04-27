@@ -65,19 +65,24 @@ extract_crps_mvgam <- function(forecast_obj, model_name) {
 }
 
 # Calculate RPS for mvgam predictions
-calculate_rps_mvgam <- function(predictions, test_data, train_data, config) {
+calculate_rps_mvgam <- function(predictions, test_data, train_data, config, precomputed_breaks = NULL) {
   cat("  Calculating RPS for mvgam predictions...\n")
   
-  # Calculate species-specific quantile breakpoints from training data
-  quantiles_by_species <- train_data |>
-    as_tibble() |>
-    group_by(species) |>
-    summarise(
-      low = quantile(count, config$ordinal_breaks[1], na.rm = TRUE),
-      medium = quantile(count, config$ordinal_breaks[2], na.rm = TRUE),
-      high = quantile(count, config$ordinal_breaks[3], na.rm = TRUE),
-      .groups = "drop"
-    )
+  # Use precomputed breaks (full dataset) or compute from training window
+  if (!is.null(precomputed_breaks)) {
+    quantiles_by_species <- precomputed_breaks
+  } else {
+    quantiles_by_species <- train_data |>
+      as_tibble() |>
+      filter_ordinal_years(config$ordinal_years) |>
+      group_by(species) |>
+      summarise(
+        low = quantile(count, config$ordinal_breaks[1], na.rm = TRUE),
+        medium = quantile(count, config$ordinal_breaks[2], na.rm = TRUE),
+        high = quantile(count, config$ordinal_breaks[3], na.rm = TRUE),
+        .groups = "drop"
+      )
+  }
   
   # Convert test data to ordinal categories
   test_data_ordinal <- test_data |>
@@ -143,25 +148,25 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config) {
 }
 
 # Main mvgam forecasting and evaluation function
-make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordinal = FALSE) {
+make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordinal = FALSE, precomputed_breaks = NULL) {
   all_species <- unique(c(train_data$species, test_data$species))
   min_year <- min(train_data$year)
   
   # Prepare data and CONVERT TO DATA FRAME
-  train_data <- train_data %>%
+  train_data <- train_data |>
     mutate(
       time = as.integer(year - min_year + 1),
       series = factor(species, levels = all_species)
-    ) %>%
-    as_tibble() %>%
+    ) |>
+    as_tibble() |>
     as.data.frame()  
   
-  test_data <- test_data %>%
+  test_data <- test_data |>
     mutate(
       time = as.integer(year - min_year + 1),
       series = factor(species, levels = all_species)
-    ) %>%
-    as_tibble() %>%
+    ) |>
+    as_tibble() |>
     as.data.frame() 
   
   # Store original train_data for ordinal calculation
@@ -187,16 +192,21 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordin
   # Combine predictions and CRPS scores
   all_preds <- bind_rows(lapply(results, function(x) x$preds))
   all_crps <- bind_rows(lapply(results, function(x) x$crps))
+
+  if (length(results) == 0 || nrow(all_crps) == 0) {
+    warning("All mvgam models failed for this window — returning empty metrics.")
+    return(list(predictions = tibble(), metrics = tibble()))
+  }
   
   # Calculate CRPS skill scores
-  baseline_summary <- all_crps %>%
-    filter(model == "baseline") %>%
-    group_by(species) %>%
+  baseline_summary <- all_crps |>
+    filter(model == "baseline") |>
+    group_by(species) |>
     summarize(crps_baseline = mean(score), .groups = "drop")
   
-  skills <- all_crps %>%
-    left_join(baseline_summary, by = "species") %>%
-    group_by(model, species) %>%
+  skills <- all_crps |>
+    left_join(baseline_summary, by = "species") |>
+    group_by(model, species) |>
     summarize(
       crps = mean(score),
       crps_baseline = first(crps_baseline),
@@ -207,7 +217,7 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordin
   # Add ordinal evaluation (RPS) if requested
   if (use_ordinal) {
     cat("\n  Adding ordinal evaluation (RPS)...\n")
-    rps_scores <- calculate_rps_mvgam(all_preds, test_data, train_data_original, CONFIG)
+    rps_scores <- calculate_rps_mvgam(all_preds, test_data, train_data_original, CONFIG, precomputed_breaks = precomputed_breaks)
     
     # Merge with skills
     skills <- skills |>
@@ -230,16 +240,24 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordin
 # UTILITY FUNCTIONS
 # =============================================================================
 
+# Filter a data frame to the most recent N years (used for ordinal break computation)
+filter_ordinal_years <- function(df, ordinal_years) {
+  if (!identical(ordinal_years, "All")) {
+    df <- df |> filter(year >= max(year) - as.integer(ordinal_years) + 1)
+  }
+  df
+}
+
 # Calculate skill scores (generic, works for any metric)
 calculate_skill_scores <- function(all_scores, metric_col = "score", baseline_col = "baseline") {
-  baseline_summary <- all_scores %>%
-    filter(model == baseline_col) %>%
-    group_by(species) %>%
+  baseline_summary <- all_scores |>
+    filter(model == baseline_col) |>
+    group_by(species) |>
     summarize(baseline_score = mean(!!sym(metric_col)), .groups = "drop")
   
-  all_scores %>%
-    left_join(baseline_summary, by = "species") %>%
-    group_by(model, species) %>%
+  all_scores |>
+    left_join(baseline_summary, by = "species") |>
+    group_by(model, species) |>
     summarize(
       score = mean(!!sym(metric_col)),
       baseline_score = first(baseline_score),

@@ -28,6 +28,13 @@ if (CONFIG$run_mvgam) {
   }
 }
 
+# Clean up any leftover Stan temp files from previous interrupted runs
+stale_xt <- list.files(tempdir(), pattern = "\\.xt$", full.names = TRUE)
+if (length(stale_xt) > 0) {
+  cat("Removing", length(stale_xt), "leftover Stan temp files...\n")
+  file.remove(stale_xt)
+}
+
 # Download wader data if needed
 if (!dir.exists("SiteandMethods")) {
   cat("Downloading wader observation data...\n")
@@ -37,6 +44,23 @@ if (!dir.exists("SiteandMethods")) {
 # Load data
 cat("Loading data...\n")
 data <- get_data(CONFIG$level)
+
+# Pre-compute ordinal breaks from full dataset if sliding_window_breaks is FALSE
+if (CONFIG$use_ordinal && !CONFIG$sliding_window_breaks) {
+  cat("Pre-computing ordinal breaks from full dataset...\n")
+  precomputed_breaks <- data |>
+    as_tibble() |>
+    filter_ordinal_years(CONFIG$ordinal_years) |>
+    group_by(species) |>
+    summarise(
+      low    = quantile(count, CONFIG$ordinal_breaks[1], na.rm = TRUE),
+      medium = quantile(count, CONFIG$ordinal_breaks[2], na.rm = TRUE),
+      high   = quantile(count, CONFIG$ordinal_breaks[3], na.rm = TRUE),
+      .groups = "drop"
+    )
+} else {
+  precomputed_breaks <- NULL
+}
 
 # Run forecasts
 results <- list()
@@ -49,7 +73,8 @@ if (CONFIG$run_mvgam) {
     train_years = CONFIG$train_years,
     test_years = CONFIG$test_years,
     models_to_run = CONFIG$models$mvgam,        
-    use_ordinal = CONFIG$use_ordinal            
+    use_ordinal = CONFIG$use_ordinal,
+    precomputed_breaks = precomputed_breaks
   )
 }
 
@@ -61,7 +86,8 @@ if (CONFIG$run_fable) {
     train_years = CONFIG$train_years,
     test_years = CONFIG$test_years,
     models_to_run = CONFIG$models$fable,       
-    use_ordinal = CONFIG$use_ordinal            
+    use_ordinal = CONFIG$use_ordinal,
+    precomputed_breaks = precomputed_breaks
   )
 }
 
@@ -70,7 +96,7 @@ saveRDS(results, paste0("results/RDS_results/forecast_results_",
                         format(Sys.time(), "%Y%m%d-%H%M"), ".rds"))
 cat("\nResults saved to forecast_results.rds\n")
 
-# Generate plots  ← ADD THIS SECTION
+# Generate plots
 cat("\n=== Generating plots ===\n")
 generate_plots(results, CONFIG)
 

@@ -9,9 +9,6 @@ library(readr)
 library(tidyr)
 library(tsibble)
 library(wader)  
-
-
-
 get_data <- function(level, path = ".") {
   counts <- tibble(max_counts(level = level, path = path)) |>
     filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib"))
@@ -26,10 +23,16 @@ get_data <- function(level, path = ".") {
       filter(year >= 1991) |> # No water data prior to 1991
       left_join(water, by = c("year")) |>
       as_tsibble(key = c(species), index = year)
+    water <- filter(water, region == "all")
+    combined <- counts |>
+      filter(year >= 1991) |> # No water data prior to 1991
+      left_join(water, by = c("year")) |>
+      as_tsibble(key = c(species), index = year)
   } else if (level == "subregion") {
     counts <- counts |>
       group_by(subregion) |>
       filter(n_distinct(year) > 10) |>
+
       ungroup() |>
       complete(year = full_seq(year, 1), subregion, species, fill = list(count = 0))
     water <- filter(water, region %in% c(unique(counts$subregion)))
@@ -59,8 +62,9 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
       dplyr::select(-geometry) |>
       pivot_wider(names_from = "variable", values_from = "value") |>
       mutate(year = as.integer(year)) |>
-      arrange("year", "region")
+      arrange(year, region)
   } else {
     water <- read_csv("eden_covariates.csv", show_col_types = FALSE)
   }
+  return(water)
 }
