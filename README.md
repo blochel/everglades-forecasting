@@ -60,6 +60,31 @@ choose
 - ordinal breaks
 - training and testing windown size
 
+```
+
+main.R:
+  ↓
+if sliding_window_breaks = FALSE:
+    Compute breaks once from full dataset
+    ↓
+    filter_ordinal_years(ordinal_years) → subset if needed
+    ↓
+    precomputed_breaks = [species-specific quantiles]
+else:
+    precomputed_breaks = NULL
+  ↓
+Pass to fit_sliding_window()
+  ↓
+For each window:
+    ↓
+    if precomputed_breaks exists:
+        Use fixed breaks
+    else:
+        Compute from training window
+        ↓
+        filter_ordinal_years(ordinal_years) → subset if needed
+```
+
 
 ## Evaluations
 
