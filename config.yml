@@ -83,3 +83,12 @@ recent_breaks:
   inherits: default
   sliding_window_breaks: false
   ordinal_years: 5
+  
+  
+ # Plotting options
+  plots:
+    skill_over_time: true
+    best_model_counts: true
+    forecast_timeseries: true  # New option
+    ts_models: ["baseline", "ar"]  # Which models to plot
+    ts_species: ["gbhe", "greg", "rosp"]  # Which species to plot
