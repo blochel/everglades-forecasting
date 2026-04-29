@@ -2,7 +2,7 @@
 # main --------------------------------------------------------------------
 
 
-library(distributional)  # vectorised probablility distribution 
+library(distributional)  # vectorised probability distribution 
 library(dplyr)           # data manipulation 
 library(ggplot2)         # figures
 library(glue)            # string formatting 
@@ -99,7 +99,7 @@ cat("\nResults saved to forecast_results.rds\n")
 
 # Generate plots
 cat("\n=== Generating plots ===\n")
-generate_plots(results, CONFIG)
+generate_plots(results, CONFIG, data = data)
 
 cat("\n=== Summary ===\n")
 cat("Evaluation type:", ifelse(CONFIG$use_ordinal, "Numeric + Ordinal (RPS)", "Numeric only (CRPS)"), "\n")
