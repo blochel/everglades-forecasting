@@ -1,5 +1,41 @@
+# R files
+.Rhistory
+.RData
+.Rproj.user
+.Rapp.history
+.gitignore
 .quarto/
+
+
+# Session Data files
+.RData
+.RDataTmp
+
+# RStudio files
+.Rproj.user/
+*.Rproj
+
+# Output/Results
+results/
+*.rds
+*.csv
+*.xlsx
+
+# Plots
+*.pdf
+*.png
+*.jpg
+
+# Data folders to exclude
 EvergladesWadingBird/
-*_files/
-/.quarto/
 WaterData/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*~
+.positai
