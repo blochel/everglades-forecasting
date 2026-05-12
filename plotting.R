@@ -1,23 +1,271 @@
-
-# plotting ----------------------------------------------------------------
-
-
+# plotting.R - COMPLETE CORRECTED VERSION
 library(ggplot2)          # figures
-library(dplyr)            # data manipulation 
+library(dplyr)            # data manipulation
 library(tidyr)            # data structure
 
-generate_plots <- function(results, config) {
+# Helper function (define at top)
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+# =============================================================================
+# MAIN PLOTTING DISPATCHER
+# =============================================================================
+
+
+generate_plots <- function(results, config, data = NULL) {
   
-  if (!is.null(results$fable)) {
+  # Only plot fable if metrics exist and have rows
+  if (!is.null(results$fable) && 
+      !is.null(results$fable$metrics) && 
+      nrow(results$fable$metrics) > 0) {
     cat("\n=== Generating Fable plots ===\n")
     plot_fable_results(results$fable$metrics)
+    if (!is.null(config$spatial) && config$spatial$level != "all") {
+      plot_spatial_comparison(results$fable$metrics, config, "fable")
+    }
   }
   
-  if (!is.null(results$mvgam)) {
+  # Only plot mvgam if metrics exist and have rows
+  if (!is.null(results$mvgam) && 
+      !is.null(results$mvgam$metrics) && 
+      nrow(results$mvgam$metrics) > 0) {
     cat("\n=== Generating mvgam plots ===\n")
     plot_mvgam_results(results$mvgam$metrics)
+    if (!is.null(config$spatial) && config$spatial$level != "all") {
+      plot_spatial_comparison(results$mvgam$metrics, config, "mvgam")
+    }
+  }
+  
+  # Regional plots (if run_by_region = TRUE)
+  if (!is.null(results$by_region) && length(results$by_region) > 0) {
+    cat("\n=== Generating Regional plots ===\n")
+    plot_regional_results(results$by_region, config)
+  }
+  
+  # Optional: forecast time series plots
+  if (!is.null(data) &&
+      !is.null(config$plots) &&
+      isTRUE(config$plots$forecast_timeseries)) {
+    cat("\n=== Generating forecast time series plots ===\n")
+    if (!is.null(results$mvgam) && nrow(results$mvgam$forecasts) > 0) {
+      png("results/mvgam_forecast_ts_grid.png", width = 14, height = 10, units = "in", res = 300)
+      plot_forecast_ts_grid(results, data,
+                            models = config$plots$ts_models %||% c("baseline", "ar"),
+                            species = config$plots$ts_species %||% c("gbhe", "greg"),
+                            framework = "mvgam")
+      dev.off()
+    }
+    if (!is.null(results$fable) && nrow(results$fable$forecasts) > 0) {
+      png("results/fable_forecast_ts_grid.png", width = 14, height = 10, units = "in", res = 300)
+      plot_forecast_ts_grid(results, data,
+                            models = config$plots$ts_models %||% c("baseline", "arima"),
+                            species = config$plots$ts_species %||% c("gbhe", "greg"),
+                            framework = "fable")
+      dev.off()
+    }
   }
 }
+# =============================================================================
+# REGIONAL PLOTTING
+# =============================================================================
+
+plot_regional_results <- function(by_region_results, config) {
+  
+  # Combine all region metrics into one data frame
+  all_region_metrics_mvgam <- bind_rows(
+    lapply(names(by_region_results), function(reg) {
+      if (!is.null(by_region_results[[reg]]$mvgam)) {
+        by_region_results[[reg]]$mvgam$metrics |>
+          mutate(region = reg)
+      }
+    })
+  )
+  
+  all_region_metrics_fable <- bind_rows(
+    lapply(names(by_region_results), function(reg) {
+      if (!is.null(by_region_results[[reg]]$fable)) {
+        by_region_results[[reg]]$fable$metrics |>
+          mutate(region = reg)
+      }
+    })
+  )
+  
+  # Plot regional results
+  if (nrow(all_region_metrics_mvgam) > 0) {
+    cat("  Plotting mvgam regional results...\n")
+    plot_regional_skill(all_region_metrics_mvgam, framework = "mvgam")
+    plot_regional_best_model(all_region_metrics_mvgam, framework = "mvgam")
+    plot_regional_heatmap(all_region_metrics_mvgam, framework = "mvgam")
+  }
+  
+  if (nrow(all_region_metrics_fable) > 0) {
+    cat("  Plotting fable regional results...\n")
+    plot_regional_skill(all_region_metrics_fable, framework = "fable")
+    plot_regional_best_model(all_region_metrics_fable, framework = "fable")
+    plot_regional_heatmap(all_region_metrics_fable, framework = "fable")
+  }
+}
+
+# 1. Skill scores over time by region
+plot_regional_skill <- function(metrics, framework = "mvgam") {
+  
+  model_col <- if (framework == "fable") ".model" else "model"
+  baseline_val <- if (framework == "fable") "baseline" else "baseline"
+  
+  # CRPS skill by region
+  p1 <- metrics |>
+    filter(get(model_col) != baseline_val) |>
+    ggplot(aes(x = test_start, y = crps_skill, 
+               color = get(model_col), group = get(model_col))) +
+    geom_line(linewidth = 0.8) +
+    geom_point(size = 1.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red", alpha = 0.7) +
+    facet_grid(region ~ species, scales = "free_y") +
+    labs(title = paste("CRPS Skill Score by Region (", framework, ")"),
+         x = "Test Start Year",
+         y = "CRPS Skill Score",
+         color = "Model") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          strip.text = element_text(size = 8, face = "bold"),
+          axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(p1)
+  ggsave(paste0("results/", framework, "_regional_crps_skill.png"), 
+         p1, width = 16, height = 12)
+  
+  # RPS skill by region (if available)
+  if ("rps_skill" %in% names(metrics)) {
+    p2 <- metrics |>
+      filter(get(model_col) != baseline_val) |>
+      ggplot(aes(x = test_start, y = rps_skill,
+                 color = get(model_col), group = get(model_col))) +
+      geom_line(linewidth = 0.8) +
+      geom_point(size = 1.5) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "red", alpha = 0.7) +
+      facet_grid(region ~ species, scales = "free_y") +
+      labs(title = paste("RPS Skill Score by Region (", framework, ")"),
+           x = "Test Start Year",
+           y = "RPS Skill Score",
+           color = "Model") +
+      theme_minimal() +
+      theme(legend.position = "bottom",
+            strip.text = element_text(size = 8, face = "bold"),
+            axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    print(p2)
+    ggsave(paste0("results/", framework, "_regional_rps_skill.png"),
+           p2, width = 16, height = 12)
+  }
+  
+  cat(framework, "regional skill plots saved!\n")
+}
+
+# 2. Best model per region per species
+plot_regional_best_model <- function(metrics, framework = "mvgam") {
+  
+  model_col <- if (framework == "fable") ".model" else "model"
+  
+  # Count wins per model per region per species
+  best_models <- metrics |>
+    filter(get(model_col) != "baseline") |>
+    group_by(region, species, test_start) |>
+    slice_max(crps_skill, n = 1) |>
+    ungroup() |>
+    count(region, species, get(model_col)) |>
+    rename(model = `get(model_col)`)
+  
+  p <- ggplot(best_models, aes(x = region, y = n, fill = model)) +
+    geom_col(position = "dodge") +
+    geom_text(aes(label = n), 
+              position = position_dodge(width = 0.9), 
+              vjust = -0.5, size = 3) +
+    facet_wrap(~species, scales = "free_y") +
+    labs(title = paste("Best Model by Region (", framework, "- CRPS)"),
+         x = "Region",
+         y = "Number of Windows Won",
+         fill = "Model") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          strip.text = element_text(face = "bold"))
+  
+  print(p)
+  ggsave(paste0("results/", framework, "_regional_best_model.png"),
+         p, width = 14, height = 10)
+  
+  cat(framework, "regional best model plot saved!\n")
+}
+
+# 3. Heatmap: skill score by region × species
+plot_regional_heatmap <- function(metrics, framework = "mvgam") {
+  
+  model_col <- if (framework == "fable") ".model" else "model"
+  
+  # Average skill score across all windows
+  avg_skill <- metrics |>
+    filter(get(model_col) != "baseline") |>
+    group_by(region, species, get(model_col)) |>
+    summarise(
+      mean_crps_skill = mean(crps_skill, na.rm = TRUE),
+      mean_rps_skill = mean(rps_skill, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    rename(model = `get(model_col)`)
+  
+  # CRPS heatmap
+  p1 <- ggplot(avg_skill, aes(x = species, y = region, fill = mean_crps_skill)) +
+    geom_tile(color = "white", linewidth = 0.5) +
+    geom_text(aes(label = round(mean_crps_skill, 2)), 
+              size = 3, color = "black") +
+    scale_fill_gradient2(
+      low = "red", mid = "white", high = "blue",
+      midpoint = 0,
+      name = "CRPS Skill"
+    ) +
+    facet_wrap(~model) +
+    labs(title = paste("Mean CRPS Skill Score: Region × Species (", framework, ")"),
+         x = "Species",
+         y = "Region") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          strip.text = element_text(face = "bold"),
+          legend.position = "right")
+  
+  print(p1)
+  ggsave(paste0("results/", framework, "_regional_crps_heatmap.png"),
+         p1, width = 14, height = 8)
+  
+  # RPS heatmap (if available)
+  if ("rps_skill" %in% names(avg_skill)) {
+    p2 <- ggplot(avg_skill, aes(x = species, y = region, fill = mean_rps_skill)) +
+      geom_tile(color = "white", linewidth = 0.5) +
+      geom_text(aes(label = round(mean_rps_skill, 2)),
+                size = 3, color = "black") +
+      scale_fill_gradient2(
+        low = "red", mid = "white", high = "blue",
+        midpoint = 0,
+        name = "RPS Skill"
+      ) +
+      facet_wrap(~model) +
+      labs(title = paste("Mean RPS Skill Score: Region × Species (", framework, ")"),
+           x = "Species",
+           y = "Region") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1),
+            strip.text = element_text(face = "bold"),
+            legend.position = "right")
+    
+    print(p2)
+    ggsave(paste0("results/", framework, "_regional_rps_heatmap.png"),
+           p2, width = 14, height = 8)
+  }
+  
+  cat(framework, "regional heatmap plots saved!\n")
+}
+
+# =============================================================================
+# FABLE PLOTTING
+# =============================================================================
 
 plot_fable_results <- function(metrics) {
   
@@ -34,7 +282,6 @@ plot_fable_results <- function(metrics) {
          color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
-  
   print(p1)
   ggsave("results/fable_crps_skill_over_time.png", p1, width = 12, height = 8)
   
@@ -52,7 +299,6 @@ plot_fable_results <- function(metrics) {
            color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
-    
     print(p2)
     ggsave("results/fable_rps_skill_over_time.png", p2, width = 12, height = 8)
   }
@@ -60,13 +306,13 @@ plot_fable_results <- function(metrics) {
   # 3. Combined metrics plot
   metrics_long <- metrics |>
     filter(.model != "baseline") |>
-    dplyr::select(.model, species, test_start, crps_skill, rmse_skill, 
+    dplyr::select(.model, species, test_start, crps_skill, rmse_skill,
                   any_of("rps_skill")) |>
     pivot_longer(cols = ends_with("_skill"),
                  names_to = "metric",
                  values_to = "skill")
   
-  p3 <- ggplot(metrics_long, 
+  p3 <- ggplot(metrics_long,
                aes(x = test_start, y = skill, color = .model, group = .model)) +
     geom_line(linewidth = 0.8) +
     geom_point(size = 1.5) +
@@ -78,7 +324,6 @@ plot_fable_results <- function(metrics) {
          color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
-  
   print(p3)
   ggsave("results/fable_all_skills_over_time.png", p3, width = 14, height = 10)
   
@@ -100,20 +345,18 @@ plot_fable_results <- function(metrics) {
     theme_minimal() +
     theme(legend.position = "bottom",
           axis.text.x = element_text(angle = 45, hjust = 1))
-  
   print(p4)
   ggsave("results/fable_best_model_counts.png", p4, width = 12, height = 8)
   
   cat("Fable plots saved!\n")
 }
 
-
-
-
-
-
+# =============================================================================
+# MVGAM PLOTTING
+# =============================================================================
 
 plot_mvgam_results <- function(metrics) {
+  
   # Check if we have non-baseline models
   non_baseline_metrics <- metrics |> filter(model != "baseline")
   
@@ -136,7 +379,6 @@ plot_mvgam_results <- function(metrics) {
          color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
-  
   print(p1)
   ggsave("results/mvgam_crps_skill_over_time.png", p1, width = 12, height = 8)
   
@@ -154,7 +396,6 @@ plot_mvgam_results <- function(metrics) {
            color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
-    
     print(p2)
     ggsave("results/mvgam_rps_skill_over_time.png", p2, width = 12, height = 8)
     
@@ -166,7 +407,7 @@ plot_mvgam_results <- function(metrics) {
                    names_to = "metric",
                    values_to = "skill")
     
-    p3 <- ggplot(metrics_long, 
+    p3 <- ggplot(metrics_long,
                  aes(x = test_start, y = skill, color = model, group = model)) +
       geom_line(linewidth = 0.8) +
       geom_point(size = 1.5) +
@@ -178,7 +419,6 @@ plot_mvgam_results <- function(metrics) {
            color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
-    
     print(p3)
     ggsave("results/mvgam_all_skills_over_time.png", p3, width = 14, height = 10)
   }
@@ -235,23 +475,45 @@ plot_mvgam_results <- function(metrics) {
   cat("mvgam plots saved!\n")
 }
 
+# =============================================================================
+# SPATIAL COMPARISON PLOT
+# =============================================================================
 
+plot_spatial_comparison <- function(metrics, config, framework_name) {
+  
+  if (!("region" %in% names(metrics))) {
+    cat("No spatial data available for comparison\n")
+    return(invisible(NULL))
+  }
+  
+  model_col <- if (framework_name == "fable") ".model" else "model"
+  
+  # Plot skill scores by region
+  p <- metrics |>
+    filter(get(model_col) != "baseline" & get(model_col) != "MEAN") |>
+    ggplot(aes(x = region, y = crps_skill, fill = get(model_col))) +
+    geom_col(position = "dodge") +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    facet_wrap(~species, scales = "free_y") +
+    labs(title = paste("CRPS Skill Score by Region (", framework_name, ")"),
+         x = "Region",
+         y = "CRPS Skill Score",
+         fill = "Model") +
+    theme_minimal() +
+    theme(legend.position = "bottom",
+          axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(p)
+  ggsave(paste0("results/", framework_name, "_spatial_comparison.png"), 
+         p, width = 14, height = 10)
+  
+  cat(framework_name, "spatial comparison plot saved!\n")
+}
 
+# =============================================================================
+# FORECAST TIME SERIES PLOTS
+# =============================================================================
 
-
-#' Plot forecast time series with prediction intervals
-#'
-#' @param results Results object from fit_sliding_window (mvgam or fable)
-#' @param data Original data tsibble with observations
-#' @param model Character, which model to plot
-#' @param species Character, which species to plot  
-#' @param test_start Integer, which test window to plot (forecast origin year)
-#' @param framework Character, "mvgam" or "fable"
-#' @param historic_start Integer, earliest year to show on plot (default: earliest in data)
-#'
-# Replace the plot_forecast_ts function in plotting.R with this fixed version:
-
-#' Plot forecast time series with prediction intervals
 plot_forecast_ts <- function(results,
                              data,
                              model = NULL,
@@ -359,5 +621,51 @@ plot_forecast_ts <- function(results,
   invisible(NULL)
 }
 
-# Helper function
-`%||%` <- function(x, y) if (is.null(x)) y else x
+plot_forecast_ts_grid <- function(results,
+                                  data,
+                                  models = NULL,
+                                  species = NULL,
+                                  test_start = NULL,
+                                  framework = "mvgam") {
+  
+  # Get defaults
+  if (framework == "mvgam") {
+    forecasts <- results$mvgam$forecasts
+    all_models <- unique(forecasts$model)
+  } else {
+    forecasts <- results$fable$forecasts %>% as_tibble()
+    all_models <- unique(forecasts$.model)
+  }
+  
+  models <- models %||% all_models[!(all_models %in% c("baseline", "MEAN"))]
+  species <- species %||% unique(forecasts$species)[1:min(3, length(unique(forecasts$species)))]
+  test_start <- test_start %||% min(forecasts$test_start)
+  
+  nmodels <- length(models)
+  nspecies <- length(species)
+  
+  # Set up multi-panel plot
+  oldpar <- par(no.readonly = TRUE)
+  on.exit(par(oldpar))
+  
+  par(mfrow = c(nspecies, nmodels),
+      mar = c(3, 3.5, 2.5, 0.5),
+      oma = c(2, 2, 2, 0))
+  
+  for (i in 1:nspecies) {
+    for (j in 1:nmodels) {
+      plot_forecast_ts(results = results,
+                       data = data,
+                       model = models[j],
+                       species = species[i],
+                       test_start = test_start,
+                       framework = framework,
+                       historic_start = test_start - 20)
+    }
+  }
+  
+  mtext("Year", side = 1, outer = TRUE, cex = 1.25, line = 0.5)
+  mtext("Count", side = 2, outer = TRUE, cex = 1.25, line = 0.5)
+  
+  invisible(NULL)
+}
