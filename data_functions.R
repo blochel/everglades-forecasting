@@ -1,37 +1,27 @@
 get_data <- function(config, path = ".") {
   
-  # Extract spatial config
   level <- config$spatial$level
   fill_missing <- config$spatial$fill_missing %||% TRUE
   fill_value <- config$spatial$fill_value %||% 0
   min_years <- config$spatial$min_years_required %||% 10
   
-  # Load raw data
   counts <- tibble(max_counts(level = level, path = path)) |>
     filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib"))
   
   water <- get_data_water()
   
-  # ADD WATER DATA DIAGNOSTICS
-  cat("\n=== Water Data Summary ===\n")
-  cat("  Years:", min(water$year), "-", max(water$year), "\n")
-  cat("  Regions:", paste(unique(water$region), collapse = ", "), "\n")
-  cat("  Observations:", nrow(water), "\n\n")
-  
-  # SPATIAL LEVEL: ALL (system-wide)
   if (level == "all") {
     
     if (fill_missing) {
       counts <- counts |>
-        complete(year = full_seq(year, 1), species, 
+        complete(year = full_seq(year, 1), species,
                  fill = list(count = fill_value)) |>
         ungroup()
     }
     
     water_all <- filter(water, region == "all")
     
-    # CHECK WATER AVAILABILITY FOR "ALL" REGION
-    cat("=== Water data for 'all' region ===\n")
+    cat("\n=== Water Data Summary ===\n")
     cat("  Years:", min(water_all$year), "-", max(water_all$year), "\n")
     cat("  N rows:", nrow(water_all), "\n\n")
     
@@ -40,58 +30,42 @@ get_data <- function(config, path = ".") {
       left_join(water_all, by = c("year")) |>
       as_tsibble(key = c(species), index = year)
     
-    # SPATIAL LEVEL: SUBREGION
   } else if (level == "subregion") {
     
-    # Filter by user-specified regions
-    if (!is.null(config$spatial$include_regions) && 
+    # Apply region filters
+    if (!is.null(config$spatial$include_regions) &&
         length(config$spatial$include_regions) > 0) {
       counts <- counts |>
         filter(subregion %in% config$spatial$include_regions)
     }
-    
-    if (!is.null(config$spatial$exclude_regions) && 
+    if (!is.null(config$spatial$exclude_regions) &&
         length(config$spatial$exclude_regions) > 0) {
       counts <- counts |>
         filter(!subregion %in% config$spatial$exclude_regions)
     }
     
-    # Filter regions by minimum years of data
+    # Filter by minimum years
     counts <- counts |>
       group_by(subregion) |>
       filter(n_distinct(year) >= min_years) |>
       ungroup()
     
-    # Handle missing data
+    # Fill missing
     if (fill_missing) {
-      if (fill_value == "interpolate") {
-        counts <- counts |>
-          group_by(subregion, species) |>
-          complete(year = full_seq(year, 1)) |>
-          mutate(count = zoo::na.approx(count, na.rm = FALSE)) |>
-          mutate(count = ifelse(is.na(count), 0, count)) |>
-          ungroup()
-      } else {
-        counts <- counts |>
-          complete(year = full_seq(year, 1), subregion, species, 
-                   fill = list(count = fill_value)) |>
-          ungroup()
-      }
+      counts <- counts |>
+        complete(year = full_seq(year, 1), subregion, species,
+                 fill = list(count = fill_value)) |>
+        ungroup()
     }
     
-    # Join with water data
+    # Join water data via subregion
     water_sub <- filter(water, region %in% unique(counts$subregion))
     
-    # CHECK WATER AVAILABILITY BY SUBREGION
-    cat("=== Water data by subregion ===\n")
+    cat("\n=== Water data by subregion ===\n")
     water_summary <- water_sub |>
       group_by(region) |>
-      summarise(
-        min_year = min(year),
-        max_year = max(year),
-        n_years = n_distinct(year),
-        .groups = "drop"
-      )
+      summarise(min_year = min(year), max_year = max(year),
+                n_years = n_distinct(year), .groups = "drop")
     print(water_summary)
     cat("\n")
     
@@ -102,30 +76,80 @@ get_data <- function(config, path = ".") {
       dplyr::select(-subregion) |>
       as_tsibble(key = c(species, region), index = year)
     
-    # SPATIAL LEVEL: SITE (if you have site-level data)
-  } else if (level == "site") {
-    stop("Site-level data not yet implemented")
+  } else if (level == "colony") {
+    
+    # Apply colony filters
+    if (!is.null(config$spatial$include_colonies) &&
+        length(config$spatial$include_colonies) > 0) {
+      counts <- counts |>
+        filter(colony %in% config$spatial$include_colonies)
+      cat("Filtering to", length(config$spatial$include_colonies), 
+          "specified colonies\n")
+    }
+    if (!is.null(config$spatial$exclude_colonies) &&
+        length(config$spatial$exclude_colonies) > 0) {
+      counts <- counts |>
+        filter(!colony %in% config$spatial$exclude_colonies)
+    }
+    
+    # Apply region/subregion filters if specified
+    if (!is.null(config$spatial$include_regions) &&
+        length(config$spatial$include_regions) > 0) {
+      counts <- counts |>
+        filter(subregion %in% config$spatial$include_regions)
+    }
+    
+    # Filter by minimum years per colony
+    counts <- counts |>
+      group_by(colony) |>
+      filter(n_distinct(year) >= min_years) |>
+      ungroup()
+    
+    cat("Colonies after year filter (>=", min_years, "years):",
+        length(unique(counts$colony)), "\n")
+    
+    # Fill missing years per colony
+    if (fill_missing) {
+      counts <- counts |>
+        group_by(colony, subregion, species) |>
+        complete(year = full_seq(year, 1),
+                 fill = list(count = fill_value)) |>
+        ungroup()
+    }
+    
+    # Join water data via subregion (colony inherits from subregion)
+    water_sub <- filter(water, region %in% unique(counts$subregion))
+    
+    cat("\n=== Water data for colony level (via subregion) ===\n")
+    print(table(unique(counts$subregion)))
+    cat("\n")
+    
+    combined <- counts |>
+      filter(year >= 1991) |>
+      left_join(water_sub, by = join_by(year, subregion == region)) |>
+      mutate(region = colony) |>  # ← Use colony as the "region" key
+      dplyr::select(-subregion, -colony) |>
+      as_tsibble(key = c(species, region), index = year)
     
   } else {
-    stop(glue::glue("Spatial level '{level}' not recognized. Use 'all', 'subregion', or 'site'."))
+    stop(glue::glue("Spatial level '{level}' not recognized. 
+                     Use 'all', 'subregion', or 'colony'."))
   }
   
-  # CHECK FOR MISSING WATER DATA IN FINAL DATASET
-  missing_water <- combined |>
+  # Final data quality check
+  cat("\n=== Data Quality Check ===\n")
+  missing_summary <- combined |>
     as_tibble() |>
-    summarise(
-      n_missing_breed = sum(is.na(breed_season_depth)),
-      n_missing_dry = sum(is.na(dry_days)),
-      n_missing_recession = sum(is.na(recession))
-    )
+    summarise(across(where(is.numeric), ~sum(is.na(.)))) |>
+    dplyr::select(where(~. > 0))
   
-  if (any(missing_water > 0)) {
-    cat("⚠️  WARNING: Missing water covariate data detected:\n")
-    print(missing_water)
-    cat("\n")
+  if (ncol(missing_summary) > 0) {
+    cat("⚠️  Columns with missing values:\n")
+    print(missing_summary)
+  } else {
+    cat("✅ No missing values in numeric columns\n")
   }
   
-  # Add spatial metadata
   attr(combined, "spatial_level") <- level
   attr(combined, "spatial_units") <- if (level == "all") {
     "system-wide"
@@ -133,9 +157,17 @@ get_data <- function(config, path = ".") {
     unique(combined$region)
   }
   
-  cat(glue::glue("✅ Loaded data at '{level}' level: {nrow(combined)} observations\n"))
+  cat(glue::glue("\n✅ Loaded data at '{level}' level: {nrow(combined)} observations\n"))
   if (level != "all") {
     cat(glue::glue("   Spatial units: {paste(unique(combined$region), collapse = ', ')}\n"))
+    
+    year_ranges <- combined |>
+      as_tibble() |>
+      group_by(region) |>
+      summarise(min_year = min(year), max_year = max(year),
+                n_years = n_distinct(year), .groups = "drop")
+    cat("\n   Year ranges:\n")
+    print(year_ranges, n = Inf)
   }
   cat("\n")
   
