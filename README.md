@@ -33,6 +33,8 @@ install.packages(c(
   "feasts",        # Feature extraction
   "ggplot2",       # Figures
   "glue",          # String formatting
+  "remotes",       
+  "scales", 
   "tidyr",         # Data structure
   "tsibble",       # Time series tibbles
   "verification",  # RPS scoring
