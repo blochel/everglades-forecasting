@@ -1,12 +1,13 @@
-# evaluation.R 
-library(dplyr)              # data manipulation 
+# evaluation.R - COMPLETE CORRECTED VERSION
+library(dplyr)              # data manipulation
 library(tidyr)              # data structure
 library(verification)       # RPS
-library(distributional)     # vectorised probability distribution 
+library(distributional)     # vectorised probability distribution
 
 # =============================================================================
 # SLIDING WINDOW FRAMEWORK (Universal)
 # =============================================================================
+
 fit_sliding_window <- function(data, make_forecast, train_years, test_years, ...) {
   year_min <- min(data$year)
   year_max <- max(data$year)
@@ -29,12 +30,30 @@ fit_sliding_window <- function(data, make_forecast, train_years, test_years, ...
     # make_forecast handles everything internally based on framework
     forecast_and_metrics <- make_forecast(train_data, test_data, ...)
     
-    forecast <- forecast_and_metrics[[1]] |>
-      mutate(test_start = test_starts[i]) |>
-      as_tibble()
+    # Check if we got valid results
+    if (is.null(forecast_and_metrics) || length(forecast_and_metrics) < 2) {
+      warning("Window ", i, " returned NULL or incomplete results")
+      next
+    }
     
-    metric <- forecast_and_metrics[[2]] |>
-      mutate(test_start = test_starts[i])
+    # Safely extract forecasts
+    forecast <- tryCatch({
+      forecast_and_metrics[[1]] |>
+        mutate(test_start = test_starts[i]) |>
+        as_tibble()
+    }, error = function(e) {
+      warning("Error processing forecasts for window ", i, ": ", e$message)
+      tibble()
+    })
+    
+    # Safely extract metrics
+    metric <- tryCatch({
+      forecast_and_metrics[[2]] |>
+        mutate(test_start = test_starts[i])
+    }, error = function(e) {
+      warning("Error processing metrics for window ", i, ": ", e$message)
+      tibble()
+    })
     
     forecasts <- bind_rows(forecasts, forecast)
     metrics <- bind_rows(metrics, metric)
@@ -98,21 +117,14 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config, prec
     ungroup()
   
   # Calculate probabilities from mvgam predictions
-  # Uses prediction quantiles (non-parametric, robust?)
   forecasts_probs <- predictions |>
     left_join(quantiles_by_species, by = "species") |>
     rowwise() |>
     mutate(
-      # Use empirical quantiles from predictions to estimate probabilities
-      # Assuming columns Q2.5, Q25, Q50, Q75, Q97.5 exist
-      # Interpolate to get probabilities at category boundaries
-      
-      # Simple approach: assume normal distribution from Estimate and std dev                           
-      pred_sd = (Q97.5 - Q2.5) / (2 * 1.96),  # Approximate SD from 95% PI
-      
+      pred_sd = (Q97.5 - Q2.5) / (2 * 1.96),
       prob_low = pnorm(low, mean = Estimate, sd = pred_sd),
       prob_medium = pnorm(medium, mean = Estimate, sd = pred_sd) - prob_low,
-      prob_high = pnorm(high, mean = Estimate, sd = pred_sd) - 
+      prob_high = pnorm(high, mean = Estimate, sd = pred_sd) -
         pnorm(medium, mean = Estimate, sd = pred_sd),
       prob_very_high = 1 - pnorm(high, mean = Estimate, sd = pred_sd)
     ) |>
@@ -130,7 +142,7 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config, prec
           as.numeric()
         
         prob_matrix <- pick(prob_low, prob_medium, prob_high, prob_very_high) |>
-          as.matrix()
+          base::as.matrix()
         
         mean(rps(obs_species, prob_matrix)$rps)
       },
@@ -167,16 +179,30 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordin
       series = factor(species, levels = all_species)
     ) |>
     as_tibble() |>
-    as.data.frame() 
+    as.data.frame()
   
   # Store original train_data for ordinal calculation
   train_data_original <- train_data
   
   # Fit all requested models
   results <- list()
+  
   for (model_name in models_to_run) {
     cat(paste0("\n  Fitting ", model_name, " model\n"))
-    fit_function <- get(paste0("fit_mvgam_", model_name))
+    
+    # Get the fit function
+    fit_function <- tryCatch({
+      base::get(paste0("fit_mvgam_", model_name))
+    }, error = function(e) {
+      warning("Could not find function fit_mvgam_", model_name)
+      NULL
+    })
+    
+    if (is.null(fit_function)) {
+      next
+    }
+    
+    # Fit the model
     result <- tryCatch({
       fit_function(train_data, test_data, CONFIG)
     }, error = function(e) {
@@ -184,18 +210,54 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordin
       NULL
     })
     
-    if (!is.null(result)) {
+    # Store result if successful
+    if (!is.null(result) && !is.null(result$preds) && !is.null(result$crps)) {
       results[[model_name]] <- result
+    } else {
+      warning(paste0("  ", model_name, " returned incomplete results"))
     }
   }
   
-  # Combine predictions and CRPS scores
-  all_preds <- bind_rows(lapply(results, function(x) x$preds))
-  all_crps <- bind_rows(lapply(results, function(x) x$crps))
-
-  if (length(results) == 0 || nrow(all_crps) == 0) {
+  # Check if we have any successful results
+  if (length(results) == 0) {
     warning("All mvgam models failed for this window — returning empty metrics.")
     return(list(predictions = tibble(), metrics = tibble()))
+  }
+  
+  cat("\n  Successfully fit", length(results), "model(s)\n")
+  
+  # Safely combine predictions
+  all_preds <- tryCatch({
+    bind_rows(lapply(results, function(x) {
+      if (!is.null(x$preds) && nrow(x$preds) > 0) {
+        x$preds
+      } else {
+        tibble()
+      }
+    }))
+  }, error = function(e) {
+    warning("Error combining predictions: ", e$message)
+    tibble()
+  })
+  
+  # Safely combine CRPS scores
+  all_crps <- tryCatch({
+    bind_rows(lapply(results, function(x) {
+      if (!is.null(x$crps) && nrow(x$crps) > 0) {
+        x$crps
+      } else {
+        tibble()
+      }
+    }))
+  }, error = function(e) {
+    warning("Error combining CRPS scores: ", e$message)
+    tibble()
+  })
+  
+  # Check if we have CRPS scores
+  if (nrow(all_crps) == 0) {
+    warning("No CRPS scores available - returning predictions only")
+    return(list(predictions = all_preds, metrics = tibble()))
   }
   
   # Calculate CRPS skill scores
@@ -204,37 +266,50 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run, use_ordin
     group_by(species) |>
     summarize(crps_baseline = mean(score), .groups = "drop")
   
-  skills <- all_crps |>
-    left_join(baseline_summary, by = "species") |>
-    group_by(model, species) |>
-    summarize(
-      crps = mean(score),
-      crps_baseline = first(crps_baseline),
-      crps_skill = 1 - (crps / crps_baseline),
-      .groups = "drop"
-    )
+  if (nrow(baseline_summary) == 0) {
+    warning("No baseline model CRPS - cannot calculate skill scores")
+    skills <- all_crps |>
+      group_by(model, species) |>
+      summarize(
+        crps = mean(score),
+        crps_baseline = NA_real_,
+        crps_skill = NA_real_,
+        .groups = "drop"
+      )
+  } else {
+    skills <- all_crps |>
+      left_join(baseline_summary, by = "species") |>
+      group_by(model, species) |>
+      summarize(
+        crps = mean(score),
+        crps_baseline = first(crps_baseline),
+        crps_skill = 1 - (crps / crps_baseline),
+        .groups = "drop"
+      )
+  }
   
   # Add ordinal evaluation (RPS) if requested
-  if (use_ordinal) {
+  if (use_ordinal && nrow(all_preds) > 0) {
     cat("\n  Adding ordinal evaluation (RPS)...\n")
-    rps_scores <- calculate_rps_mvgam(all_preds, test_data, train_data_original, CONFIG, precomputed_breaks = precomputed_breaks)
     
-    # Merge with skills
-    skills <- skills |>
-      left_join(rps_scores |> dplyr::select(model, species, rps, rps_skill),
-                by = c("model", "species"))
+    rps_scores <- tryCatch({
+      calculate_rps_mvgam(all_preds, test_data, train_data_original, CONFIG, 
+                          precomputed_breaks = precomputed_breaks)
+    }, error = function(e) {
+      warning("RPS calculation failed: ", e$message)
+      NULL
+    })
+    
+    # Merge with skills if RPS succeeded
+    if (!is.null(rps_scores) && nrow(rps_scores) > 0) {
+      skills <- skills |>
+        left_join(rps_scores |> dplyr::select(model, species, rps, rps_skill),
+                  by = c("model", "species"))
+    }
   }
   
   return(list(predictions = all_preds, metrics = skills))
 }
-
-# =============================================================================
-# FABLE EVALUATION (already in fable_models.R, but documenting here)
-# =============================================================================
-# Note: Fable evaluation is handled in make_fable_forecasts() -> evaluate_fable_forecasts()
-# - Uses normal approximation with variance from distribution object
-# - Calculates CRPS via accuracy()
-# - Calculates RPS via calculate_rps() if use_ordinal = TRUE
 
 # =============================================================================
 # UTILITY FUNCTIONS

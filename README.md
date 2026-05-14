@@ -13,19 +13,36 @@ This project implements sliding window cross-validation to compare multiple fore
 - Snowy Egret (sneg)
 - White Ibis (whib)
 - Wood Stork (wost)
+***spatial hierarchy:***
+```r
+all
+ └── subregion (8 regions: 1, 2a, 2b, 3an, 3as, 3ase, 3b, inlandenp)
+      └── colony (33 viable colonies ≥15 years)
+``` 
 
 ## Installation
 
 ```r
 # Required packages
-install.packages(c("dplyr", "ggplot2", "tidyr", "tsibble", "verification"))
-install.packages(c("fable", "feasts", "distributional"))
-install.packages("remotes")
+install.packages(c(
+  "config",        # Configuration management
+  "conflicted",    # Namespace conflict handling
+  "distributional",# Vectorised probability distributions
+  "dplyr",         # Data manipulation
+  "fable",         # Traditional time series models
+  "feasts",        # Feature extraction
+  "ggplot2",       # Figures
+  "glue",          # String formatting
+  "tidyr",         # Data structure
+  "tsibble",       # Time series tibbles
+  "verification",  # RPS scoring
+  "zoo"            # Interpolation
+))
 
-# Install mvgam and wader from GitHub
-remotes::install_github("nicholasjclark/mvgam")
-remotes::install_github("weecology/wader")  
-remotes::install_github("weecology/edenr")  
+# Install from GitHub
+remotes::install_github("nicholasjclark/mvgam")  # Dynamic GAMs
+remotes::install_github("weecology/wader")        # Bird count data
+remotes::install_github("weecology/edenr")        # Everglades water data
 ```
 
 
@@ -37,15 +54,16 @@ remotes::install_github("weecology/edenr")
 ├── data_functions.R                # Data loading and preparation
 ├── evaluation.R                    # Cross-validation and metrics
 ├── plotting.R                      # Visualization functions
+├── final_year_plots.R              # Forecast vs actual for latest year
 ├── models/
 │   ├── mvgam_baseline.R           # Baseline mvgam model
-│   ├── mvgam_ar.R                 # AR model with covariates
+│   ├── mvgam_ar.R                 # AR model with water covariates
 │   ├── mvgam_ar_exog.R            # AR with polynomial covariates
-│   ├── mvgam_species_specific.R   # Species-specific responses
+│   ├── mvgam_species_specific.R   # Species-specific smooth responses
 │   ├── mvgam_trait.R              # Trait-based VAR model
-│   └── fable_models.R             # ARIMA, TSLM, etc.
+│   └── fable_models.R             # ARIMA, TSLM, ARIMA-exog
 └── results/
-    ├── RDS_results/               # Saved model outputs
+    ├── RDS_results/               # Saved model outputs (.rds)
     └── *.png                      # Generated plots
 ```     
     
@@ -130,5 +148,31 @@ Four plots generated per model framework:
     - Combined Metrics - All metrics in faceted grid
     - Best Model Counts - Winner frequency by species
     
-    
+  
+***All settings controlled via config.yml. Key options:***  
+```r 
+default:
+  spatial:
+    level: all              # "all", "subregion", or "colony"
+    run_by_region: false    # true = separate model per spatial unit
+    min_years_required: 10  # Minimum years to include a spatial unit
+
+  models:
+    mvgam: [baseline, ar, ar_exog, species_specific, trait]
+    fable: [baseline, arima, tslm, arima_exog]
+
+  run_mvgam: true           # Enable/disable mvgam framework
+  run_fable: true           # Enable/disable fable framework
+  use_ordinal: true         # true = CRPS + RPS, false = CRPS only
+
+  ordinal_breaks: [0.33, 0.50, 0.67]   # Category boundaries (quantiles)
+  sliding_window_breaks: true           # true = recompute per window
+  ordinal_years: All                    # Years used to define breaks
+
+  train_years: 20           # Training window size
+  test_years: 2             # Test window size
+  chains: 4                 # MCMC chains
+  burnin: 1500              # MCMC warmup iterations
+  samples: 1500             # MCMC sampling iterations
+```
     
