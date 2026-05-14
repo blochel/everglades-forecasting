@@ -1,4 +1,4 @@
-# config.yml - COMPLETE VERSION
+# config.yml 
 default:
   # Spatial configuration
   spatial:
@@ -27,7 +27,7 @@ default:
       - arima_exog
   
   # Execution control
-  run_mvgam: true
+  run_mvgam: false
   run_fable: true
   
   # Evaluation settings

@@ -4,11 +4,26 @@
 # Works with both mvgam and fable results, multiple models
 # ============================================================================
 
-library(ggplot2)
-library(dplyr)
-library(readr)
-library(tidyr)
-library(scales)
+# =============================================================================
+# DEPENDENCIES - source if running standalone
+# =============================================================================
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+if (!exists("get_data")) {
+  library(config)
+  library(dplyr)
+  library(ggplot2)
+  library(tidyr)
+  library(readr)
+  library(tsibble)
+  library(scales)
+  library(distributional)
+  source("data_functions.R")
+}
+
+if (!exists("CONFIG")) {
+  CONFIG <- config::get()
+}
 
 # =============================================================================
 # CONFIGURATION
@@ -61,8 +76,8 @@ if (!is.null(results$fable) && nrow(results$fable$forecasts) > 0) {
     mutate(
       framework = "fable",
       estimate  = .mean,               # fable is on original scale
-      lower_pi  = pmax(0, quantile(count, 0.025)),
-      upper_pi  = quantile(count, 0.975),
+      lower_pi = pmax(0, distributional::quantile(count, 0.025)[[1]]),
+      upper_pi = distributional::quantile(count, 0.975)[[1]],
       model     = .model
     ) |>
     dplyr::select(year, species, model, framework, estimate, lower_pi, upper_pi)
