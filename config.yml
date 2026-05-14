@@ -1,14 +1,109 @@
+# config.yml - COMPLETE VERSION
 default:
+  # Spatial configuration
   spatial:
-    level: all          # "all", "subregion", "colony"
+    level: subregion                    # "all", "subregion", "colony"
     fill_missing: true
     fill_value: 0
     min_years_required: 10
     exclude_regions: []
     include_regions: []
-    exclude_colonies: []  # ← NEW
-    include_colonies: []  # ← NEW
+    exclude_colonies: []
+    include_colonies: []
+    run_by_region: true          
+  
+  # Model selection
+  models:
+    mvgam:
+      - baseline
+      - ar
+      - ar_exog
+      - species_specific
+      - trait
+    fable:
+      - baseline
+      - arima
+      - tslm
+      - arima_exog
+  
+  # Execution control
+  run_mvgam: true
+  run_fable: true
+  
+  # Evaluation settings
+  use_ordinal: true
+  data_type: numeric
+  
+  # Ordinal category settings
+  ordinal_breaks: [0.33, 0.50, 0.67]
+  sliding_window_breaks: true
+  ordinal_years: All
+  
+  # Cross-validation parameters
+  train_years: 20
+  test_years: 2
+  
+  # MCMC settings (mvgam)
+  chains: 4
+  burnin: 1500
+  samples: 1500
+  
+  # Plotting options
+  plots:
+    skill_over_time: true
+    best_model_counts: true
+    forecast_timeseries: false
+    ts_models: ["baseline", "ar"]
+    ts_species: ["gbhe", "greg", "rosp"]
+
+# Quick testing environment
+testing:
+  inherits: default
+  models:
+    mvgam:
+      - baseline
+      - ar
+    fable:
+      - baseline
+      - arima
+  run_mvgam: true
+  run_fable: true
+  chains: 2
+  burnin: 500
+  samples: 500
+  train_years: 15
+  plots:
+    forecast_timeseries: false
+
+# Test subregion level - each region separately
+test_subregion:
+  inherits: default
+  spatial:
+    level: subregion
+    min_years_required: 15
+    run_by_region: true
+  models:
+    mvgam:
+      - baseline
+      - ar
+  chains: 2
+  burnin: 500
+  samples: 500
+
+# Test subregion level - all regions together
+test_subregion_combined:
+  inherits: default
+  spatial:
+    level: subregion
+    min_years_required: 15
     run_by_region: false
+  models:
+    mvgam:
+      - baseline
+      - ar
+  chains: 2
+  burnin: 500
+  samples: 500
 
 # Colony level - all viable colonies
 test_colony:
@@ -16,7 +111,7 @@ test_colony:
   spatial:
     level: colony
     min_years_required: 15
-    run_by_region: true   # Each colony separately
+    run_by_region: true
   models:
     mvgam:
       - baseline
@@ -44,3 +139,32 @@ test_colony_subset:
   chains: 2
   burnin: 500
   samples: 500
+
+# Production runs
+production:
+  inherits: default
+  run_mvgam: false
+  run_fable: true
+  chains: 4
+  burnin: 2000
+  samples: 2000
+
+# Test without ordinal
+no_ordinal:
+  inherits: default
+  use_ordinal: false
+  models:
+    mvgam:
+      - baseline
+      - ar
+
+# Test fixed vs adaptive ordinal breaks
+fixed_breaks:
+  inherits: default
+  sliding_window_breaks: false
+  ordinal_years: All
+
+recent_breaks:
+  inherits: default
+  sliding_window_breaks: false
+  ordinal_years: 5
