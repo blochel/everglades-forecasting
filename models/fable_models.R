@@ -1,48 +1,56 @@
 library(fable)
+library(fable.gam)
 library(feasts)
 library(tsibble)
 library(verification)
 library(dplyr)
 
-make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL, use_ordinal = TRUE, config = CONFIG, precomputed_breaks = NULL) {
-  
+make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL, 
+                                 use_ordinal = TRUE, config = CONFIG, 
+                                 precomputed_breaks = NULL) {
   if (is.null(models_to_run)) {
-    models_to_run <- c("baseline", "arima", "tslm", "arima_exog")
+    models_to_run <- c("baseline", "arima", "tslm", "arima_exog", "gam")
   }
   
-  # Build model call as a string and evaluate it
   model_specs <- character()
   
   if ("baseline" %in% models_to_run) {
     model_specs <- c(model_specs, "baseline = MEAN(count)")
   }
-  
   if ("arima" %in% models_to_run) {
     model_specs <- c(model_specs, "arima = ARIMA(count)")
   }
-  
   if ("tslm" %in% models_to_run) {
-    model_specs <- c(model_specs, 
-                     "tslm = TSLM(count ~ breed_season_depth + I(breed_season_depth^2) + pre_recession + post_recession + recession + dry_days + trend())")
+    model_specs <- c(model_specs,
+                     "tslm = TSLM(count ~ breed_season_depth + I(breed_season_depth^2) + 
+                   pre_recession + post_recession + recession + dry_days + trend())")
   }
-  
   if ("arima_exog" %in% models_to_run) {
-    model_specs <- c(model_specs, 
-                     "arima_exog = ARIMA(count ~ breed_season_depth + I(breed_season_depth^2) + pre_recession + post_recession + recession + dry_days)")
+    model_specs <- c(model_specs,
+                     "arima_exog = ARIMA(count ~ breed_season_depth + I(breed_season_depth^2) + 
+                          pre_recession + post_recession + recession + dry_days)")
+  }
+  if ("gam" %in% models_to_run) {
+    model_specs <- c(model_specs,
+                     "gam = GAM(count ~ trend2(k = 4, bs = 'gp') + 
+                 xreg(breed_season_depth, smooth = TRUE, k = 5) + 
+                 xreg(dry_days, smooth = TRUE, k = 5) + 
+                 xreg(recession, smooth = TRUE, k = 4) + 
+                 errors(ar = 1))")
   }
   
-  # Build and evaluate the model call
-  model_call_str <- paste0("model(train_data, ", paste(model_specs, collapse = ", "), ")")
+  model_call_str <- paste0("model(train_data, ",
+                           paste(model_specs, collapse = ", "), ")")
   models <- eval(parse(text = model_call_str))
   
   forecasts <- forecast(models, new_data = test_data)
   
   evaluations <- evaluate_fable_forecasts(
-    forecasts, 
-    test_data, 
+    forecasts,
+    test_data,
     train_data,
-    use_ordinal = use_ordinal,
-    config = config,
+    use_ordinal        = use_ordinal,
+    config             = config,
     precomputed_breaks = precomputed_breaks
   )
   
