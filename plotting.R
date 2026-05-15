@@ -6,16 +6,74 @@ library(ggplot2)          # figures
 library(dplyr)            # data manipulation 
 library(tidyr)            # data structure
 
-generate_plots <- function(results, config) {
+generate_plots <- function(results, config, data = NULL) {
   
-  if (!is.null(results$fable)) {
+  # Only plot fable if metrics exist and have rows
+  if (!is.null(results$fable) &&
+      !is.null(results$fable$metrics) &&
+      nrow(results$fable$metrics) > 0) {
     cat("\n=== Generating Fable plots ===\n")
     plot_fable_results(results$fable$metrics)
+    if (!is.null(config$spatial) &&
+        config$spatial$level != "all") {
+      plot_spatial_comparison(results$fable$metrics,
+                              config, "fable")
+    }
   }
   
-  if (!is.null(results$mvgam)) {
+  # Only plot mvgam if metrics exist and have rows
+  if (!is.null(results$mvgam) &&
+      !is.null(results$mvgam$metrics) &&
+      nrow(results$mvgam$metrics) > 0) {
     cat("\n=== Generating mvgam plots ===\n")
     plot_mvgam_results(results$mvgam$metrics)
+    if (!is.null(config$spatial) &&
+        config$spatial$level != "all") {
+      plot_spatial_comparison(results$mvgam$metrics,
+                              config, "mvgam")
+    }
+  }
+  
+  # Regional plots
+  if (!is.null(results$by_region) &&
+      length(results$by_region) > 0) {
+    cat("\n=== Generating Regional plots ===\n")
+    plot_regional_results(results$by_region, config)
+  }
+  
+  # Forecast time series (only if data provided)
+  if (!is.null(data) &&
+      !is.null(config$plots) &&
+      isTRUE(config$plots$forecast_timeseries)) {
+    cat("\n=== Generating forecast time series plots ===\n")
+    if (!is.null(results$mvgam) &&
+        nrow(results$mvgam$forecasts) > 0) {
+      png("results/mvgam_forecast_ts_grid.png",
+          width = 14, height = 10, units = "in", res = 300)
+      plot_forecast_ts_grid(
+        results, data,
+        models    = config$plots$ts_models %||%
+          c("baseline", "ar"),
+        species   = config$plots$ts_species %||%
+          c("gbhe", "greg"),
+        framework = "mvgam"
+      )
+      dev.off()
+    }
+    if (!is.null(results$fable) &&
+        nrow(results$fable$forecasts) > 0) {
+      png("results/fable_forecast_ts_grid.png",
+          width = 14, height = 10, units = "in", res = 300)
+      plot_forecast_ts_grid(
+        results, data,
+        models    = config$plots$ts_models %||%
+          c("baseline", "arima"),
+        species   = config$plots$ts_species %||%
+          c("gbhe", "greg"),
+        framework = "fable"
+      )
+      dev.off()
+    }
   }
 }
 

@@ -300,7 +300,7 @@ cat("Config saved to:", config_filename, "\n")
 # GENERATE PLOTS
 # =============================================================================
 cat("\n=== Generating Plots ===\n")
-generate_plots(results, CONFIG, data = data)
+generate_plots(results, CONFIG)
 
 # =============================================================================
 # SUMMARY
