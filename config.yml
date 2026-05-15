@@ -2,7 +2,7 @@
 default:
   # Spatial configuration
   spatial:
-    level: subregion                    # "all", "subregion", "colony"
+    level: all                    # "all", "subregion", "colony"
     fill_missing: true
     fill_value: 0
     min_years_required: 10
@@ -10,7 +10,7 @@ default:
     include_regions: []
     exclude_colonies: []
     include_colonies: []
-    run_by_region: true          
+    run_by_region: false          
   
   # Model selection
   models:
@@ -28,7 +28,7 @@ default:
       - gam
 
   # Execution control
-  run_mvgam: false
+  run_mvgam: true
   run_fable: true
   
   # Evaluation settings

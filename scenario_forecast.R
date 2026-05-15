@@ -47,7 +47,7 @@ water_cols <- c(
 # =============================================================================
 
 cat("Loading data...\n")
-data_raw <- get_data(CONFIG)
+data_raw <- get_wading_bird_data(CONFIG)
 
 # Aggregate to system-wide
 # Sum counts, average water covariates across regions
