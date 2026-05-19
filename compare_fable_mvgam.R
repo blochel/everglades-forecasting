@@ -488,11 +488,6 @@ if (all(c("mvgam_AR", "fable_GAM") %in%
     facet_wrap(~species, ncol = 3) +
     labs(
       title    = "fable GAM vs mvgam AR: Window-by-Window",
-      subtitle = paste(
-        "Points above diagonal = mvgam wins",
-        "| Points below = fable wins",
-        "| Dashed = equal performance"
-      ),
       x     = "fable GAM CRPS Skill",
       y     = "mvgam AR CRPS Skill",
       color = "Winner"

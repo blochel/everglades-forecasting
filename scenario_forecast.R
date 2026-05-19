@@ -840,7 +840,6 @@ p7 <- forecasts_tbl |>
   scale_y_continuous(labels = comma) +
   labs(
     title    = paste("Species Composition by Scenario -", forecast_year),
-    subtitle = "GAM interaction model | Stacked species counts",
     x        = "Water Scenario",
     y        = "Count",
     fill     = "Species"
