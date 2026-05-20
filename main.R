@@ -17,7 +17,7 @@ library(dplyr)           # data manipulation
 library(ggplot2)         # figures
 library(glue)            # string formatting
 library(tidyr)           # data structure
-library(tsibble)         # fable models
+library(tsibble)         # time series tibbles
 library(wader)           # bird data
 library(mvgam)           # dgam models
 library(verification)    # RPS
@@ -77,7 +77,6 @@ if (length(stale_xt) > 0) {
   file.remove(stale_xt)
 }
 
-# Download wader data if needed
 if (!dir.exists("SiteandMethods")) {
   cat("Downloading wader observation data...\n")
   download_observations(".")

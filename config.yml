@@ -25,9 +25,10 @@ default:
       - arima
       - tslm
       - arima_exog
-  
+      - gam
+
   # Execution control
-  run_mvgam: false
+  run_mvgam: true
   run_fable: true
   
   # Evaluation settings
