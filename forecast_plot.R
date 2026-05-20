@@ -4,11 +4,13 @@
 #
 # ordinal = FALSE → count predictions (default)
 # ordinal = TRUE  → ordinal category probabilities
+# y_max           → set maximum y-axis value (count plot only)
 #
 # Usage:
 #   forecast.plott("fable.arima", "greg")
 #   forecast.plott("fable.arima", "greg", ordinal = TRUE)
 #   forecast.plott("mvgam.ar",    "whib", windows = "last")
+#   forecast.plott("mvgam.trait", "sneg", y_max = 5000)
 #   forecast.plott("mvgam.trait", "greg", ordinal = TRUE)
 # ============================================================================
 
@@ -24,7 +26,10 @@ forecast.plott <- function(model_name,
                            framework    = NULL,
                            windows      = "all",
                            last_n_years = NULL,
-                           ordinal      = FALSE) {
+                           ordinal      = FALSE,
+                           cat_colors   = NULL,
+                           cat_labels   = NULL,
+                           y_max        = NULL) {
   
   # ==========================================================================
   # AUTO-DETECT FRAMEWORK
@@ -196,6 +201,25 @@ forecast.plott <- function(model_name,
   train_sd    <- sd(train_raw$count, na.rm = TRUE)
   
   # ==========================================================================
+  # CLIP EXTREME VALUES if y_max is set
+  # Prevents wildly large predictions from distorting ribbons
+  # Uses 3x y_max as clip threshold - keeps data but limits distortion
+  # ==========================================================================
+  
+  clip_val <- if (!is.null(y_max)) y_max * 3 else Inf
+  
+  fc_data <- fc_data |>
+    dplyr::mutate(
+      estimate = pmin(estimate, clip_val),
+      lower_95 = pmin(lower_95, clip_val),
+      upper_95 = pmin(upper_95, clip_val),
+      lower_80 = pmin(lower_80, clip_val),
+      upper_80 = pmin(upper_80, clip_val),
+      lower_50 = pmin(lower_50, clip_val),
+      upper_50 = pmin(upper_50, clip_val)
+    )
+  
+  # ==========================================================================
   # BRANCH: ORDINAL OR COUNT PLOT
   # ==========================================================================
   
@@ -204,6 +228,24 @@ forecast.plott <- function(model_name,
     # ========================================================================
     # ORDINAL PLOT
     # ========================================================================
+    
+    if (is.null(cat_colors)) {
+      cat_colors <- c(
+        "Low"       = "#3498db",
+        "Medium"    = "#2ecc71",
+        "High"      = "#f39c12",
+        "Very High" = "#e74c3c"
+      )
+    }
+    
+    if (is.null(cat_labels)) {
+      cat_labels <- c(
+        "Low"       = "Low",
+        "Medium"    = "Medium",
+        "High"      = "High",
+        "Very High" = "Very High"
+      )
+    }
     
     breaks_config <- CONFIG$ordinal_breaks
     
@@ -215,12 +257,11 @@ forecast.plott <- function(model_name,
                          breaks_config[3], na.rm = TRUE)
     
     cat(sprintf("Ordinal breaks for %s:\n", species_name))
-    cat(sprintf("  Low       < %.0f\n",        b_low))
-    cat(sprintf("  Medium:   %.0f - %.0f\n",   b_low,    b_medium))
-    cat(sprintf("  High:     %.0f - %.0f\n",   b_medium, b_high))
-    cat(sprintf("  Very High > %.0f\n\n",       b_high))
+    cat(sprintf("  Low       < %.0f\n",       b_low))
+    cat(sprintf("  Medium:   %.0f - %.0f\n",  b_low,    b_medium))
+    cat(sprintf("  High:     %.0f - %.0f\n",  b_medium, b_high))
+    cat(sprintf("  Very High > %.0f\n\n",      b_high))
     
-    # Compute probabilities from forecast intervals
     fc_probs <- fc_data |>
       dplyr::mutate(
         pred_sd     = pmax((upper_95 - lower_95) / (2 * 1.96), 1),
@@ -234,7 +275,6 @@ forecast.plott <- function(model_name,
       dplyr::select(year, test_start, time_index,
                     p_low, p_medium, p_high, p_very_high)
     
-    # Training probabilities
     train_probs_df <- data.frame(
       time_index  = train_raw$time_index,
       p_low       = pnorm(b_low,
@@ -248,11 +288,11 @@ forecast.plott <- function(model_name,
         pnorm(b_medium,
               mean = train_raw$count, sd = train_sd),
       p_very_high = 1 - pnorm(b_high,
-                              mean = train_raw$count, sd = train_sd),
+                              mean = train_raw$count,
+                              sd   = train_sd),
       period      = "training"
     )
     
-    # Average forecast probabilities across windows
     fc_avg <- do.call(rbind, lapply(
       split(fc_probs, fc_probs$time_index),
       function(x) {
@@ -268,8 +308,7 @@ forecast.plott <- function(model_name,
     ))
     fc_avg <- fc_avg[order(fc_avg$time_index), ]
     
-    # Last window probabilities
-    fc_last_probs <- fc_probs[fc_probs$test_start == last_window, ]
+    fc_last_probs    <- fc_probs[fc_probs$test_start == last_window, ]
     fc_last_probs_df <- data.frame(
       time_index  = fc_last_probs$time_index,
       p_low       = fc_last_probs$p_low,
@@ -279,11 +318,9 @@ forecast.plott <- function(model_name,
       period      = "last"
     )
     
-    # Combine training + forecast
     all_probs <- rbind(train_probs_df, fc_avg)
     all_probs <- all_probs[order(all_probs$time_index), ]
     
-    # Actual observed categories
     actuals_cat <- data.frame(
       time_index = actuals_raw$time_index,
       count      = actuals_raw$count,
@@ -298,7 +335,6 @@ forecast.plott <- function(model_name,
       )
     )
     
-    # Add y_pos: place symbol in middle of its probability band
     actuals_cat <- actuals_cat |>
       dplyr::left_join(
         all_probs |>
@@ -307,9 +343,9 @@ forecast.plott <- function(model_name,
         by = "time_index"
       ) |>
       dplyr::mutate(
-        cum_low       = p_low,
-        cum_medium    = p_low + p_medium,
-        cum_high      = p_low + p_medium + p_high,
+        cum_low    = p_low,
+        cum_medium = p_low + p_medium,
+        cum_high   = p_low + p_medium + p_high,
         y_pos = dplyr::case_when(
           category == "Low"       ~ p_low / 2,
           category == "Medium"    ~ cum_low    + p_medium    / 2,
@@ -319,10 +355,8 @@ forecast.plott <- function(model_name,
         )
       )
     
-    # Filter to last N years
     if (!is.null(last_n_years)) {
-      min_time         <- max(actuals_raw$time_index) -
-        last_n_years + 1
+      min_time         <- max(actuals_raw$time_index) - last_n_years + 1
       all_probs        <- all_probs[
         all_probs$time_index        >= min_time, ]
       fc_last_probs_df <- fc_last_probs_df[
@@ -331,7 +365,6 @@ forecast.plott <- function(model_name,
         actuals_cat$time_index      >= min_time, ]
     }
     
-    # Pivot to long format
     all_probs_long <- tidyr::pivot_longer(
       all_probs,
       cols      = c(p_low, p_medium, p_high, p_very_high),
@@ -368,13 +401,6 @@ forecast.plott <- function(model_name,
                                      "Medium", "Low"))
       )
     
-    # Colors and shapes
-    cat_colors <- c(
-      "Low"       = "#3498db",
-      "Medium"    = "#2ecc71",
-      "High"      = "#f39c12",
-      "Very High" = "#e74c3c"
-    )
     cat_shapes <- c(
       "Low"       = 1,
       "Medium"    = 2,
@@ -382,10 +408,8 @@ forecast.plott <- function(model_name,
       "Very High" = 17
     )
     
-    # Build ordinal plot
     p <- ggplot() +
       
-      # Stacked probability area (training + forecast avg)
       geom_area(
         data     = all_probs_long,
         aes(x    = time_index,
@@ -399,7 +423,6 @@ forecast.plott <- function(model_name,
         breaks = c("Low", "Medium", "High", "Very High")
       ) +
       
-      # Dashed line: start of forecast
       geom_vline(
         xintercept = fc_start - 0.5,
         linetype   = "dashed",
@@ -407,7 +430,6 @@ forecast.plott <- function(model_name,
         linewidth  = 0.6
       ) +
       
-      # Last window highlight
       geom_area(
         data     = fc_last_long,
         aes(x    = time_index,
@@ -417,7 +439,6 @@ forecast.plott <- function(model_name,
         alpha    = 0.9
       ) +
       
-      # White reference lines
       geom_hline(
         yintercept = c(0.25, 0.50, 0.75),
         linetype   = "dotted",
@@ -426,7 +447,6 @@ forecast.plott <- function(model_name,
         linewidth  = 0.4
       ) +
       
-      # Observed categories: placed in middle of their band
       geom_point(
         data  = actuals_cat,
         aes(x     = time_index,
@@ -453,9 +473,9 @@ forecast.plott <- function(model_name,
       ) +
       scale_y_continuous(
         labels = scales::percent_format(),
-        limits = c(0, 1),
         breaks = c(0, 0.25, 0.5, 0.75, 1)
       ) +
+      coord_cartesian(ylim = c(0, 1)) +
       labs(
         title  = NULL,
         x      = "Time",
@@ -492,7 +512,7 @@ forecast.plott <- function(model_name,
       upper_50   = train_raw$count + 0.67 * train_sd
     )
     
-    # Combined averaged ribbon
+    # Combined averaged ribbon - already clipped via fc_data
     fc_combined_df <- do.call(rbind, lapply(
       split(fc_data, fc_data$time_index),
       function(x) {
@@ -510,7 +530,7 @@ forecast.plott <- function(model_name,
     fc_combined_df <- fc_combined_df[
       order(fc_combined_df$time_index), ]
     
-    # All windows lines
+    # All windows lines - already clipped via fc_data
     fc_all_df <- data.frame(
       time_index = fc_data$time_index,
       estimate   = fc_data$estimate,
@@ -538,19 +558,18 @@ forecast.plott <- function(model_name,
     cat("Last window:", last_window,
         "| Years:", paste(sort(fc_last$year), collapse = ", "), "\n\n")
     
-    # Filter to last N years
     if (!is.null(last_n_years)) {
       min_time       <- max(act_df$time_index) - last_n_years + 1
       train_df       <- train_df[
-        train_df$time_index           >= min_time, ]
+        train_df$time_index       >= min_time, ]
       fc_combined_df <- fc_combined_df[
-        fc_combined_df$time_index     >= min_time, ]
+        fc_combined_df$time_index >= min_time, ]
       fc_all_df      <- fc_all_df[
-        fc_all_df$time_index          >= min_time, ]
+        fc_all_df$time_index      >= min_time, ]
       fc_last_df     <- fc_last_df[
-        fc_last_df$time_index         >= min_time, ]
+        fc_last_df$time_index     >= min_time, ]
       act_df         <- act_df[
-        act_df$time_index             >= min_time, ]
+        act_df$time_index         >= min_time, ]
     }
     
     # Build count plot
@@ -658,8 +677,12 @@ forecast.plott <- function(model_name,
         )
       ) +
       scale_y_continuous(
-        labels = scales::comma,
-        limits = c(0, NA)
+        labels = scales::comma
+      ) +
+      # coord_cartesian zooms without removing data
+      # prevents extreme predictions from distorting ribbons
+      coord_cartesian(
+        ylim = if (is.null(y_max)) c(0, NA) else c(0, y_max)
       ) +
       labs(
         title = NULL,
