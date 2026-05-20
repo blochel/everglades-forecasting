@@ -34,16 +34,16 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
 
 # =============================================================================
 # MAIN DATA LOADING
-# Renamed to get_wading_bird_data() to avoid conflict with mvgam::get_data()
 # =============================================================================
 
-get_wading_bird_data <- function(config, path = ".") {
+get_data <- function(config, path = ".") {
   
   level        <- config$spatial$level
   fill_missing <- config$spatial$fill_missing %||% TRUE
   fill_value   <- config$spatial$fill_value   %||% 0
   min_years    <- config$spatial$min_years_required %||% 10
   
+  # Load raw counts and water data
   counts <- tibble(max_counts(level = level, path = path)) |>
     filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib"))
   
@@ -77,6 +77,7 @@ get_wading_bird_data <- function(config, path = ".") {
     # ==========================================================================
   } else if (level == "subregion") {
     
+    # Apply include/exclude filters
     if (!is.null(config$spatial$include_regions) &&
         length(config$spatial$include_regions) > 0) {
       counts <- counts |>
@@ -88,11 +89,13 @@ get_wading_bird_data <- function(config, path = ".") {
         filter(!subregion %in% config$spatial$exclude_regions)
     }
     
+    # Filter by minimum years per subregion
     counts <- counts |>
       group_by(subregion) |>
       filter(n_distinct(year) >= min_years) |>
       ungroup()
     
+    # Fill missing years
     if (fill_missing) {
       counts <- counts |>
         complete(year = full_seq(year, 1), subregion, species,
@@ -100,6 +103,7 @@ get_wading_bird_data <- function(config, path = ".") {
         ungroup()
     }
     
+    # Join water data via subregion
     water_sub <- filter(water, region %in% unique(counts$subregion))
     
     cat("\n=== Water data by subregion ===\n")
@@ -126,6 +130,7 @@ get_wading_bird_data <- function(config, path = ".") {
     # ==========================================================================
   } else if (level == "colony") {
     
+    # Apply colony include/exclude filters
     if (!is.null(config$spatial$include_colonies) &&
         length(config$spatial$include_colonies) > 0) {
       counts <- counts |>
@@ -138,12 +143,15 @@ get_wading_bird_data <- function(config, path = ".") {
       counts <- counts |>
         filter(!colony %in% config$spatial$exclude_colonies)
     }
+    
+    # Apply subregion filter if specified
     if (!is.null(config$spatial$include_regions) &&
         length(config$spatial$include_regions) > 0) {
       counts <- counts |>
         filter(subregion %in% config$spatial$include_regions)
     }
     
+    # Filter by minimum years per colony
     counts <- counts |>
       group_by(colony) |>
       filter(n_distinct(year) >= min_years) |>
@@ -152,6 +160,7 @@ get_wading_bird_data <- function(config, path = ".") {
     cat("Colonies after year filter (>=", min_years, "years):",
         length(unique(counts$colony)), "\n")
     
+    # Fill missing years per colony
     if (fill_missing) {
       counts <- counts |>
         group_by(colony, subregion, species) |>
@@ -160,6 +169,7 @@ get_wading_bird_data <- function(config, path = ".") {
         ungroup()
     }
     
+    # Join water data via subregion (colony inherits from subregion)
     water_sub <- filter(water, region %in% unique(counts$subregion))
     
     cat("\n=== Water data for colony level (via subregion) ===\n")
@@ -169,7 +179,7 @@ get_wading_bird_data <- function(config, path = ".") {
     combined <- counts |>
       filter(year >= 1991) |>
       left_join(water_sub, by = join_by(year, subregion == region)) |>
-      mutate(region = colony) |>
+      mutate(region = colony) |>   # colony becomes the spatial key
       dplyr::select(-subregion, -colony) |>
       as_tsibble(key = c(species, region), index = year)
     
@@ -191,12 +201,13 @@ get_wading_bird_data <- function(config, path = ".") {
     dplyr::select(where(~. > 0))
   
   if (ncol(missing_summary) > 0) {
-    cat("WARNING: Columns with missing values:\n")
+    cat("⚠️  Columns with missing values:\n")
     print(missing_summary)
   } else {
-    cat("No missing values in numeric columns\n")
+    cat("✅ No missing values in numeric columns\n")
   }
   
+  # Attach metadata
   attr(combined, "spatial_level") <- level
   attr(combined, "spatial_units") <- if (level == "all") {
     "system-wide"
@@ -204,13 +215,14 @@ get_wading_bird_data <- function(config, path = ".") {
     unique(combined$region)
   }
   
+  # Summary output
   cat(glue::glue(
-    "\nLoaded data at '{level}' level: {nrow(combined)} observations\n"
+    "\n✅ Loaded data at '{level}' level: {nrow(combined)} observations\n"
   ))
   
   if (level != "all") {
     cat(glue::glue(
-      "Spatial units: {paste(unique(combined$region), collapse = ', ')}\n"
+      "   Spatial units: {paste(unique(combined$region), collapse = ', ')}\n"
     ))
     combined |>
       as_tibble() |>
