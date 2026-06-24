@@ -27,6 +27,7 @@ default:
       - ar_exog_plus
       - species_specific
       - trait
+      - trait2
     fable:
       - baseline
       - arima
