@@ -52,6 +52,7 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
   if (!is.null(data) &&
       !is.null(config$plots) &&
       isTRUE(config$plots$forecast_timeseries)) {
+    
     cat("\n=== Generating forecast time series plots ===\n")
     
     if (!is.null(results$mvgam) &&
@@ -65,6 +66,7 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
         framework = "mvgam"
       )
       dev.off()
+      cat("mvgam forecast time series saved\n")
     }
     
     if (!is.null(results$fable) &&
@@ -78,6 +80,7 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
         framework = "fable"
       )
       dev.off()
+      cat("fable forecast time series saved\n")
     }
   }
   
@@ -164,15 +167,14 @@ plot_fable_results <- function(metrics, results_dir = "results") {
   
   # 1. CRPS Skill over time
   p1 <- ggplot(metrics |> filter(.model != "baseline"),
-               aes(x = test_start, y = crps_skill, color = .model, group = .model)) +
+               aes(x = test_start, y = crps_skill,
+                   color = .model, group = .model)) +
     geom_line(linewidth = 1) +
     geom_point(size = 2) +
     geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
     facet_wrap(~species, scales = "free_y") +
     labs(title = "CRPS Skill Score Over Time (Fable Models)",
-         x = "Test Start Year",
-         y = "CRPS Skill Score",
-         color = "Model") +
+         x = "Test Start Year", y = "CRPS Skill Score", color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
   print(p1)
@@ -181,15 +183,14 @@ plot_fable_results <- function(metrics, results_dir = "results") {
   # 2. RPS Skill over time
   if ("rps_skill" %in% names(metrics)) {
     p2 <- ggplot(metrics |> filter(.model != "baseline"),
-                 aes(x = test_start, y = rps_skill, color = .model, group = .model)) +
+                 aes(x = test_start, y = rps_skill,
+                     color = .model, group = .model)) +
       geom_line(linewidth = 1) +
       geom_point(size = 2) +
       geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
       facet_wrap(~species, scales = "free_y") +
       labs(title = "RPS Skill Score Over Time (Fable Models)",
-           x = "Test Start Year",
-           y = "RPS Skill Score",
-           color = "Model") +
+           x = "Test Start Year", y = "RPS Skill Score", color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
     print(p2)
@@ -209,9 +210,7 @@ plot_fable_results <- function(metrics, results_dir = "results") {
     geom_hline(yintercept = 0, linetype = "dashed", color = "red", alpha = 0.5) +
     facet_grid(metric ~ species, scales = "free_y") +
     labs(title = "All Skill Scores Over Time (Fable Models)",
-         x = "Test Start Year",
-         y = "Skill Score",
-         color = "Model") +
+         x = "Test Start Year", y = "Skill Score", color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
   print(p3)
@@ -226,12 +225,11 @@ plot_fable_results <- function(metrics, results_dir = "results") {
   
   p4 <- ggplot(best_models, aes(x = species, y = n, fill = .model)) +
     geom_col(position = "dodge") +
-    geom_text(aes(label = n), position = position_dodge(width = 0.9), vjust = -0.5) +
+    geom_text(aes(label = n), position = position_dodge(width = 0.9),
+              vjust = -0.5) +
     facet_wrap(~metric, scales = "free_y") +
     labs(title = "Number of Windows Each Model Performed Best (Fable)",
-         x = "Species",
-         y = "Count of Windows",
-         fill = "Model") +
+         x = "Species", y = "Count of Windows", fill = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom",
           axis.text.x = element_text(angle = 45, hjust = 1))
@@ -254,15 +252,14 @@ plot_mvgam_results <- function(metrics, results_dir = "results") {
   
   # 1. CRPS Skill over time
   p1 <- ggplot(metrics |> filter(model != "baseline"),
-               aes(x = test_start, y = crps_skill, color = model, group = model)) +
+               aes(x = test_start, y = crps_skill,
+                   color = model, group = model)) +
     geom_line(linewidth = 1) +
     geom_point(size = 2) +
     geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
     facet_wrap(~species, scales = "free_y") +
     labs(title = "CRPS Skill Score Over Time (mvgam Models)",
-         x = "Test Start Year",
-         y = "CRPS Skill Score",
-         color = "Model") +
+         x = "Test Start Year", y = "CRPS Skill Score", color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
   print(p1)
@@ -270,16 +267,16 @@ plot_mvgam_results <- function(metrics, results_dir = "results") {
   
   # 2. RPS Skill over time
   if ("rps_skill" %in% names(metrics)) {
+    
     p2 <- ggplot(metrics |> filter(model != "baseline"),
-                 aes(x = test_start, y = rps_skill, color = model, group = model)) +
+                 aes(x = test_start, y = rps_skill,
+                     color = model, group = model)) +
       geom_line(linewidth = 1) +
       geom_point(size = 2) +
       geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
       facet_wrap(~species, scales = "free_y") +
       labs(title = "RPS Skill Score Over Time (mvgam Models)",
-           x = "Test Start Year",
-           y = "RPS Skill Score",
-           color = "Model") +
+           x = "Test Start Year", y = "RPS Skill Score", color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
     print(p2)
@@ -295,12 +292,11 @@ plot_mvgam_results <- function(metrics, results_dir = "results") {
                  aes(x = test_start, y = skill, color = model, group = model)) +
       geom_line(linewidth = 0.8) +
       geom_point(size = 1.5) +
-      geom_hline(yintercept = 0, linetype = "dashed", color = "red", alpha = 0.5) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "red",
+                 alpha = 0.5) +
       facet_grid(metric ~ species, scales = "free_y") +
       labs(title = "All Skill Scores Over Time (mvgam Models)",
-           x = "Test Start Year",
-           y = "Skill Score",
-           color = "Model") +
+           x = "Test Start Year", y = "Skill Score", color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
     print(p3)
@@ -321,12 +317,11 @@ plot_mvgam_results <- function(metrics, results_dir = "results") {
     
     p4 <- ggplot(best_models, aes(x = species, y = n, fill = model)) +
       geom_col(position = "dodge") +
-      geom_text(aes(label = n), position = position_dodge(width = 0.9), vjust = -0.5) +
+      geom_text(aes(label = n), position = position_dodge(width = 0.9),
+                vjust = -0.5) +
       facet_wrap(~metric) +
       labs(title = "Number of Windows Each Model Performed Best (mvgam)",
-           x = "Species",
-           y = "Count of Windows",
-           fill = "Model") +
+           x = "Species", y = "Count of Windows", fill = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom",
             axis.text.x = element_text(angle = 45, hjust = 1))
@@ -339,11 +334,10 @@ plot_mvgam_results <- function(metrics, results_dir = "results") {
     
     p4 <- ggplot(best_models, aes(x = species, y = n, fill = model)) +
       geom_col(position = "dodge") +
-      geom_text(aes(label = n), position = position_dodge(width = 0.9), vjust = -0.5) +
+      geom_text(aes(label = n), position = position_dodge(width = 0.9),
+                vjust = -0.5) +
       labs(title = "Number of Windows Each Model Performed Best (mvgam)",
-           x = "Species",
-           y = "Count of Windows",
-           fill = "Model") +
+           x = "Species", y = "Count of Windows", fill = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom",
             axis.text.x = element_text(angle = 45, hjust = 1))
@@ -375,8 +369,13 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
   
   if (framework == "mvgam") {
     preds <- forecasts %>%
-      dplyr::filter(model == !!model, species == !!species, test_start == !!test_start) %>%
-      dplyr::select(year, estimate = Estimate, lower_pi = Q2.5, upper_pi = Q97.5)
+      dplyr::filter(model == !!model,
+                    species == !!species,
+                    test_start == !!test_start) %>%
+      dplyr::select(year,
+                    estimate = Estimate,
+                    lower_pi = Q2.5,
+                    upper_pi = Q97.5)
   } else {
     preds <- forecasts %>%
       dplyr::filter(.model == !!model, species == !!species, test_start == !!test_start) %>%
@@ -391,12 +390,12 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
     dplyr::filter(species == !!species) %>% 
     dplyr::select(year, count)
   
-  first_pred <- min(preds$year)
-  historic_start <- ifelse(is.null(historic_start), first_pred - 20, historic_start)
-  max_year <- max(preds$year)
-  
-  rangex <- c(historic_start, max_year)
-  rangey <- c(0, max(c(preds$upper_pi, obs$count), na.rm = TRUE) * 1.1)
+  first_pred    <- min(preds$year)
+  historic_start <- ifelse(is.null(historic_start), first_pred - 20,
+                           historic_start)
+  max_year      <- max(preds$year)
+  rangex        <- c(historic_start, max_year)
+  rangey        <- c(0, max(c(preds$upper_pi, obs$count), na.rm = TRUE) * 1.1)
   
   oldpar <- par(no.readonly = TRUE)
   on.exit(par(oldpar))
@@ -406,7 +405,7 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
        xlim = rangex, ylim = rangey, cex.lab = 1.5, cex.axis = 1.25, las = 1)
   title(main = paste0(species, " - ", model, " (forecast from ", test_start, ")"), cex.main = 1.25)
   
-  last_obs_year <- max(obs$year[obs$year < first_pred & !is.na(obs$count)])
+  last_obs_year  <- max(obs$year[obs$year < first_pred & !is.na(obs$count)])
   last_obs_count <- obs$count[obs$year == last_obs_year]
   
   preds$lower_pi <- pmax(0, preds$lower_pi)
@@ -415,28 +414,43 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
   poly_y <- c(last_obs_count, preds$lower_pi, rev(preds$upper_pi), last_obs_count)
   polygon(poly_x, poly_y, col = rgb(0.68, 0.84, 0.9, 0.6), border = NA)
   
-  points(c(last_obs_year, preds$year), c(last_obs_count, preds$estimate),
+  points(c(last_obs_year, preds$year),
+         c(last_obs_count, preds$estimate),
          type = "l", lwd = 2, lty = 1, col = rgb(0.2, 0.5, 0.9))
   
   obs_historic <- obs %>% dplyr::filter(year < first_pred, !is.na(count))
-  points(obs_historic$year, obs_historic$count, type = "l", lwd = 2, col = "black")
-  points(obs_historic$year, obs_historic$count, pch = 16, col = "white", cex = 1.2)
-  points(obs_historic$year, obs_historic$count, pch = 1, col = "black", lwd = 2, cex = 1.2)
+  points(obs_historic$year, obs_historic$count,
+         type = "l", lwd = 2, col = "black")
+  points(obs_historic$year, obs_historic$count,
+         pch = 16, col = "white", cex = 1.2)
+  points(obs_historic$year, obs_historic$count,
+         pch = 1, col = "black", lwd = 2, cex = 1.2)
   
   obs_future <- obs %>% dplyr::filter(year >= first_pred, !is.na(count))
   if (nrow(obs_future) > 0) {
-    obs_connect <- obs %>% dplyr::filter(year >= last_obs_year, year <= max(obs_future$year), !is.na(count))
-    points(obs_connect$year, obs_connect$count, type = "l", lwd = 2, col = "black")
-    points(obs_future$year, obs_future$count, pch = 16, col = "white", cex = 1.2)
-    points(obs_future$year, obs_future$count, pch = 1, col = "black", lwd = 2, cex = 1.2)
+    obs_connect <- obs %>%
+      dplyr::filter(year >= last_obs_year,
+                    year <= max(obs_future$year),
+                    !is.na(count))
+    points(obs_connect$year, obs_connect$count,
+           type = "l", lwd = 2, col = "black")
+    points(obs_future$year, obs_future$count,
+           pch = 16, col = "white", cex = 1.2)
+    points(obs_future$year, obs_future$count,
+           pch = 1, col = "black", lwd = 2, cex = 1.2)
   }
   
   abline(v = first_pred - 0.5, lty = 2, col = "gray50", lwd = 1.5)
   
-  legend("topleft", legend = c("Observed", "Forecast", "95% PI"),
-         lty = c(1, 1, NA), lwd = c(2, 2, NA), pch = c(1, NA, 15),
-         col = c("black", rgb(0.2, 0.5, 0.9), rgb(0.68, 0.84, 0.9, 0.6)),
-         pt.cex = c(1.2, NA, 2), bty = "n", cex = 1.1)
+  legend("topleft",
+         legend = c("Observed", "Forecast", "95% PI"),
+         lty    = c(1, 1, NA),
+         lwd    = c(2, 2, NA),
+         pch    = c(1, NA, 15),
+         col    = c("black", rgb(0.2, 0.5, 0.9), rgb(0.68, 0.84, 0.9, 0.6)),
+         pt.cex = c(1.2, NA, 2),
+         bty    = "n",
+         cex    = 1.1)
   
   invisible(NULL)
 }
