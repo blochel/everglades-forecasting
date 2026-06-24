@@ -1,50 +1,91 @@
+# =============================================================================
+# TRAIT-BASED MODEL
+# Species responses weighted by ecological traits
+# =============================================================================
+
 fit_mvgam_trait <- function(train_data, test_data, config) {
-  cat("  Fitting trait model...\n")
+  cat("  Fitting trait-based model...\n")
+  
+  # =========================================================================
+  # DEFINE SPECIES TRAITS
+  # =========================================================================
+  
+  trait_data <- data.frame(
+    species = c("wost", "rosp", "whib", "sneg", "greg", "gbhe"),
+    recession_weight = c(1.0, 0.2, 0.7, 0.5, 0.5, 0.1),
+    optimal_depth = c(25, 15, 10, 12, 18, 40),
+    stringsAsFactors = FALSE
+  )
+  
+  # =========================================================================
+  # ADD TRAIT-BASED FEATURES TO DATA
+  # =========================================================================
+  
+  # Join traits to training data
+  train_enriched <- train_data %>%
+    left_join(trait_data, by = "species") %>%
+    mutate(
+      # Species-weighted hydrology effects
+      recession_effect = recession * recession_weight,
+      depth_deviation = abs(breed_season_depth - optimal_depth),
+      
+      # Ensure species is a factor
+      species = factor(species)
+    )
+  
+  # Join traits to test data
+  test_enriched <- test_data %>%
+    left_join(trait_data, by = "species") %>%
+    mutate(
+      recession_effect = recession * recession_weight,
+      depth_deviation = abs(breed_season_depth - optimal_depth),
+      species = factor(species)
+    )
+  
+  # =========================================================================
+  # FIT MODEL
+  # =========================================================================
   
   tryCatch({
     model <- mvgam(
-      formula = count ~ series,
+      formula = count ~ series,  # Species intercepts
+      
       trend_formula = ~
-        0 +
-        s(init_depth, bs = 'cr') +
-        s(init_depth, trend, bs = 'sz', xt = list(bs = 'cr')) +
-        s(dry_days, bs = 'cr') +
-        s(breed_season_depth, bs = 'cr') +
-        s(breed_season_depth, trend, bs = 'sz', xt = list(bs = 'cr')) +
-        s(recession, bs = 'cr'),
+        # Trait-weighted effects
+        recession_effect +
+        depth_deviation +
+        dry_days +
+        reversals,
       
-      trend_model = mvgam::VAR(),
-      
-      trend_map = data.frame(
-        series = unique(train_data$series),
-        trend = c(1, 1, 2, 1, 3, 4)
-      ),
-      priors = prior(std_normal(), class = b),
-      data = train_data,
+      trend_model = mvgam::AR(p = 1),
+      data = train_enriched,
       family = nb(),
-      control = list(max_treedepth = 10, adapt_delta = 0.9),
-      share_obs_params = TRUE,
-      noncentred = TRUE,
-      backend = 'cmdstanr',
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples
     )
     
-    preds <- predict(model, newdata = test_data) %>%
+    # Predictions
+    preds <- predict(model, newdata = test_enriched) %>%
       as_tibble() %>%
       mutate(
-        species = test_data$species,
-        year = test_data$year,
+        species = test_enriched$species,
+        year = test_enriched$year,
         model = "trait"
       )
     
-    fc <- forecast(model, newdata = test_data)
+    # Forecasts & CRPS
+    fc <- forecast(model, newdata = test_enriched)
     crps <- extract_crps_mvgam(fc, model_name = "trait")
     
+    cat("  Trait model fitted successfully!\n")
+    
     return(list(preds = preds, crps = crps))
+    
   }, error = function(e) {
-    warning("Trait model failed: ", e$message)
+    warning("Trait-based model failed: ", e$message)
+    cat("  Full error:\n")
+    print(e)
     return(NULL)
   })
 }

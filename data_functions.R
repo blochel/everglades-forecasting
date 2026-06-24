@@ -1,4 +1,5 @@
 # data_functions.R
+library(digest)
 library(edenR)
 library(dplyr)
 library(readr)
@@ -33,15 +34,50 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
 }
 
 # =============================================================================
-# MAIN DATA LOADING
+# MAIN DATA LOADING (with caching support)
 # =============================================================================
 
-get_wading_bird_data <- function(config, path = ".") {
+get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
   
   level        <- config$spatial$level
   fill_missing <- config$spatial$fill_missing %||% TRUE
   fill_value   <- config$spatial$fill_value   %||% 0
   min_years    <- config$spatial$min_years_required %||% 10
+  
+  # =========================================================================
+  # CACHING
+  # =========================================================================
+  
+  if (cache) {
+    # Generate cache key based on config
+    cache_key <- digest::digest(list(
+      level = level,
+      fill_missing = fill_missing,
+      fill_value = fill_value,
+      min_years = min_years,
+      include_regions = config$spatial$include_regions,
+      exclude_regions = config$spatial$exclude_regions,
+      include_colonies = config$spatial$include_colonies,
+      exclude_colonies = config$spatial$exclude_colonies
+    ))
+    
+    cache_file <- file.path("cache", paste0("data_", level, "_", substr(cache_key, 1, 8), ".rds"))
+    
+    # Load from cache if available
+    if (file.exists(cache_file)) {
+      cache_time <- file.info(cache_file)$mtime
+      cache_age_hours <- as.numeric(difftime(Sys.time(), cache_time, units = "hours"))
+      
+      cat(glue::glue("✓ Loading cached data from: {basename(cache_file)}\n"))
+      cat(glue::glue("  (cached {round(cache_age_hours, 1)} hours ago)\n\n"))
+      
+      return(readRDS(cache_file))
+    }
+  }
+  
+  # =========================================================================
+  # LOAD DATA (if not cached)
+  # =========================================================================
   
   # Load raw counts and water data
   counts <- tibble(max_counts(level = level, path = path)) |>
@@ -234,6 +270,16 @@ get_wading_bird_data <- function(config, path = ".") {
         .groups  = "drop"
       ) |>
       print(n = Inf)
+  }
+  
+  # =========================================================================
+  # SAVE TO CACHE
+  # =========================================================================
+  
+  if (cache) {
+    dir.create("cache", showWarnings = FALSE, recursive = TRUE)
+    saveRDS(combined, cache_file)
+    cat(glue::glue("\n💾 Data cached to: {basename(cache_file)}\n"))
   }
   
   cat("\n")
