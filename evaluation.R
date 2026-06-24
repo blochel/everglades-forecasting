@@ -172,7 +172,7 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config,
       pred_sd = pmax((Q97.5 - Q2.5) / (2 * 1.96), 0.1),
       prob_low = pnorm(low, mean = Estimate, sd = pred_sd),
       prob_medium = pnorm(medium, mean = Estimate, sd = pred_sd) - prob_low,
-      prob_high = pnorm(high, mean = Estimate, sd = pred_sd) - 
+      prob_high = pnorm(high, mean = Estimate, sd = pred_sd) -
         pnorm(medium, mean = Estimate, sd = pred_sd),
       prob_very_high = 1 - pnorm(high, mean = Estimate, sd = pred_sd)
     ) |>
@@ -303,7 +303,8 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
       NULL
     })
     
-    if (!is.null(result)) {
+    # Store result if successful
+    if (!is.null(result) && !is.null(result$preds) && !is.null(result$crps)) {
       results[[model_name]] <- result
       cat(" ✓\n")
     }

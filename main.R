@@ -61,6 +61,7 @@ conflict_prefer("RW",        "mvgam")
 conflict_prefer("get",       "base")
 conflict_prefer("as.matrix", "base")
 
+
 # =============================================================================
 # LOAD CONFIGURATION
 # =============================================================================
@@ -72,7 +73,7 @@ if (!exists("CONFIG")) {
   cat("Loading configuration:", active_config, "\n")
   CONFIG <- config::get()
 } else {
-  cat("Using pre-set CONFIG\n")
+  cat("Using pre-set CONFIG (", attr(CONFIG, "config") %||% "custom", ")\n")
 }
 
 # Print key configuration settings
@@ -238,9 +239,11 @@ if (CONFIG$use_ordinal && !CONFIG$sliding_window_breaks) {
   cat("  Using data from:", CONFIG$ordinal_years, "\n")
   cat("  Break quantiles:", paste(CONFIG$ordinal_breaks, collapse = ", "), "\n\n")
   
+  # Check if spatial grouping needed
   has_regions <- CONFIG$spatial$level != "all" && "region" %in% names(data)
   
   if (has_regions) {
+    # Breaks by region AND species
     precomputed_breaks <- data |>
       as_tibble() |>
       filter_ordinal_years(CONFIG$ordinal_years) |>
@@ -252,6 +255,7 @@ if (CONFIG$use_ordinal && !CONFIG$sliding_window_breaks) {
         .groups = "drop"
       )
   } else {
+    # Breaks by species only (system-wide)
     precomputed_breaks <- data |>
       as_tibble() |>
       filter_ordinal_years(CONFIG$ordinal_years) |>
@@ -308,6 +312,10 @@ run_models <- function(data, framework = "mvgam", models_to_run, ...) {
   )
 }
 
+
+
+
+
 # =============================================================================
 # RUN FORECASTS
 # =============================================================================
@@ -327,11 +335,13 @@ run_by_region <- !is.null(CONFIG$spatial$run_by_region) &&
 
 if (run_by_region) {
   
+  # Get unique regions
   regions <- unique(as_tibble(data)$region)
   
   print_section(glue("RUNNING MODELS SEPARATELY BY REGION ({length(regions)} regions)"))
   cat("⚠️  Note: Running hierarchical models (run_by_region: false) is faster!\n\n")
   
+  # Loop over regions
   region_results <- list()
   
   for (i in seq_along(regions)) {
@@ -485,7 +495,6 @@ if (run_by_region) {
     }
   }
 }
-
 # =============================================================================
 # SAVE RESULTS TO RUN FOLDER
 # =============================================================================
