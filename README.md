@@ -45,8 +45,16 @@ remotes::install_github("weecology/edenr")
 │   ├── mvgam_trait.R              # Trait-based VAR model
 │   └── fable_models.R             # ARIMA, TSLM, etc.
 └── results/
-    ├── RDS_results/               # Saved model outputs
-    └── *.png                      # Generated plots
+    ├── run_all_YYYYMMDD-HHMM/
+│       ├── forecast_results.rds
+│       ├── config.rds
+│       ├── mvgam_crps_skill_over_time.png
+│       ├── mvgam_rps_skill_over_time.png
+│       ├── mvgam_best_model_counts.png
+│       └── forecasts/
+│           ├── mvgam_gbhe_trait.png
+│           ├── mvgam_greg_trait.png
+│           └── ... (all species × models)
 ```     
     
     

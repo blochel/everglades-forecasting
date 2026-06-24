@@ -1,6 +1,6 @@
 # =============================================================================
 # MAIN.R - Wading Bird Forecasting Pipeline
-# Optimized for parallel processing and efficient workflows
+# Optimized for parallel processing and organized output folders
 # =============================================================================
 
 start_time <- Sys.time()
@@ -36,18 +36,18 @@ cat("\nLoading libraries...\n")
 suppressPackageStartupMessages({
   library(config)
   library(conflicted)
-  library(distributional)  # vectorised probability distribution
-  library(dplyr)           # data manipulation
-  library(ggplot2)         # figures
-  library(glue)            # string formatting
-  library(tidyr)           # data structure
-  library(tsibble)         # time series tibbles
-  library(wader)           # bird data
-  library(mvgam)           # mvgam models
-  library(verification)    # RPS
-  library(future)          # parallel backend
-  library(furrr)           # parallel map
-  library(progressr)       # progress bars
+  library(distributional)
+  library(dplyr)
+  library(ggplot2)
+  library(glue)
+  library(tidyr)
+  library(tsibble)
+  library(wader)
+  library(mvgam)
+  library(verification)
+  library(future)
+  library(furrr)
+  library(progressr)
 })
 
 cat("✓ Core libraries loaded\n")
@@ -95,6 +95,25 @@ if ((CONFIG$parallel$enabled %||% FALSE)) {
 }
 cat("  • Ordinal evaluation:", CONFIG$use_ordinal, "\n")
 cat("\n")
+
+# =============================================================================
+# CREATE TIMESTAMPED RUN FOLDER
+# =============================================================================
+
+print_section("CREATING RUN FOLDER")
+
+# Generate timestamp
+timestamp <- format(Sys.time(), "%Y%m%d-%H%M")
+
+# Create run folder name with spatial level and timestamp
+run_folder <- file.path("results", paste0("run_", CONFIG$spatial$level, "_", timestamp))
+
+# Create directory structure
+dir.create(run_folder, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(run_folder, "forecasts"), recursive = TRUE, showWarnings = FALSE)
+
+cat("✓ Run folder created:", run_folder, "\n")
+cat("  All outputs will be saved to this folder\n")
 
 # =============================================================================
 # LOAD FUNCTIONS
@@ -282,9 +301,8 @@ run_models <- function(data, framework = "mvgam", models_to_run, ...) {
     models_to_run      = models_to_run,
     use_ordinal        = CONFIG$use_ordinal,
     precomputed_breaks = precomputed_breaks,
-    # NEW PARAMETERS:
     cv_windows         = CONFIG$cv_windows %||% NULL,
-    parallel           = CONFIG$parallel$enabled %||% TRUE,
+    parallel           = CONFIG$parallel$enabled %||% FALSE,
     workers            = CONFIG$parallel$workers %||% NULL,
     ...
   )
@@ -444,12 +462,6 @@ if (run_by_region) {
       models_to_run = CONFIG$models$mvgam
     )
     
-    # Check for errors in results
-    if (is.null(results$mvgam) || 
-        (is.list(results$mvgam) && length(results$mvgam) == 0)) {
-      warning("mvgam forecasting returned no results")
-    }
-    
     if (!is.null(results$mvgam)) {
       cat("\n✓ mvgam forecasts complete!\n")
       print_cv_summary(results$mvgam)
@@ -467,11 +479,6 @@ if (run_by_region) {
       models_to_run = CONFIG$models$fable
     )
     
-    if (is.null(results$fable) || 
-        (is.list(results$fable) && length(results$fable) == 0)) {
-      warning("fable forecasting returned no results")
-    }
-    
     if (!is.null(results$fable)) {
       cat("\n✓ fable forecasts complete!\n")
       print_cv_summary(results$fable)
@@ -480,38 +487,30 @@ if (run_by_region) {
 }
 
 # =============================================================================
-# SAVE RESULTS
+# SAVE RESULTS TO RUN FOLDER
 # =============================================================================
 
 print_section("SAVING RESULTS")
 
-# Create results directory
-if (!dir.exists("results/RDS_results")) {
-  dir.create("results/RDS_results", recursive = TRUE)
-}
-
-# Generate filenames with timestamp
-timestamp <- format(Sys.time(), "%Y%m%d-%H%M")
-results_filename <- glue("results/RDS_results/forecast_results_{CONFIG$spatial$level}_{timestamp}.rds")
-config_filename <- glue("results/RDS_results/config_{CONFIG$spatial$level}_{timestamp}.rds")
-
 # Save results
+results_filename <- file.path(run_folder, "forecast_results.rds")
 saveRDS(results, results_filename)
 cat("✓ Results saved to:", results_filename, "\n")
 
 # Save config
+config_filename <- file.path(run_folder, "config.rds")
 saveRDS(CONFIG, config_filename)
 cat("✓ Config saved to:", config_filename, "\n")
 
 # =============================================================================
-# GENERATE PLOTS
+# GENERATE PLOTS (using run folder)
 # =============================================================================
 
 print_section("GENERATING PLOTS")
 
 tryCatch({
-  generate_plots(results, CONFIG, data = data)
-  cat("✓ Plots generated successfully\n")
+  generate_plots(results, CONFIG, data = data, results_dir = run_folder)
+  cat("✓ All plots saved to:", run_folder, "\n")
 }, error = function(e) {
   warning("Plotting failed: ", e$message)
 })
@@ -521,6 +520,8 @@ tryCatch({
 # =============================================================================
 
 print_banner("ANALYSIS COMPLETE")
+
+cat("📂 Run Folder:", run_folder, "\n\n")
 
 cat("📊 Configuration:\n")
 cat("  • Spatial level:", CONFIG$spatial$level, "\n")
@@ -559,7 +560,7 @@ end_time <- Sys.time()
 runtime <- difftime(end_time, start_time, units = "mins")
 
 cat("⏱️  Runtime:", round(runtime, 1), "minutes\n")
-cat("💾 Results saved to:", results_filename, "\n")
+cat("💾 All results saved to:", run_folder, "\n")
 cat("✅ Analysis complete at:", format(end_time, "%Y-%m-%d %H:%M:%S"), "\n\n")
 
 # =============================================================================

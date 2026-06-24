@@ -1,7 +1,3 @@
-# =============================================================================
-# TRAIT-BASED VAR MODEL (Enhanced with guilds and interactions)
-# =============================================================================
-
 fit_mvgam_trait2 <- function(train_data, test_data, config) {
   cat("  Fitting trait2 model (enhanced)...\n")
   
@@ -19,15 +15,11 @@ fit_mvgam_trait2 <- function(train_data, test_data, config) {
     "gbhe",   "visual_deep",      40,                0.10,                   0.30,                  "large"
   )
   
-  cat("  Species trait matrix:\n")
-  print(trait_data)
-  cat("\n")
-  
   # =========================================================================
-  # PREPARE DATA WITH TRAIT-BASED FEATURES
+  # ENRICH DATA WITH TRAIT-BASED FEATURES
   # =========================================================================
   
-  train_data_traits <- train_data %>%
+  train_enriched <- train_data %>%
     as_tibble() %>%
     left_join(trait_data, by = "species") %>%
     mutate(
@@ -41,7 +33,7 @@ fit_mvgam_trait2 <- function(train_data, test_data, config) {
     ) %>%
     as.data.frame()
   
-  test_data_traits <- test_data %>%
+  test_enriched <- test_data %>%
     as_tibble() %>%
     left_join(trait_data, by = "species") %>%
     mutate(
@@ -62,31 +54,24 @@ fit_mvgam_trait2 <- function(train_data, test_data, config) {
   tryCatch({
     model <- mvgam(
       formula = count ~
-        s(series, bs = 're') +           # Species in observation formula
+        s(series, bs = 're') +
         s(foraging_guild, bs = 're'),
       
       trend_formula = ~
-        # Core hydrology effects
         depth_deviation + I(depth_deviation^2) +
         recession_effect +
         dry_days +
         reversal_effect + I(reversals > 2) +
         stress_index +
-        
-        # Guild-level responses
         s(foraging_guild, by = depth_deviation, bs = 're') +
         s(foraging_guild, by = dry_days, bs = 're') +
-        
-        # Body size effects
         s(body_size, bs = 're') +
         s(body_size, by = stress_index, bs = 're') +
-        
-        # Species-specific smooths - USE "trend" NOT "series"!
         s(breed_season_depth, by = trend, bs = 'fs', k = 4) +  
-        s(recession, by = trend, bs = 'fs', k = 4),            
+        s(recession, by = trend, bs = 'fs', k = 4),
       
       trend_model = mvgam::AR(p = 1),
-      data = train_data_traits,
+      data = train_enriched,
       family = nb(),
       chains = config$chains,
       burnin = config$burnin,
@@ -94,40 +79,14 @@ fit_mvgam_trait2 <- function(train_data, test_data, config) {
       priors = prior(normal(0, 2), class = 'b')
     )
     
-    cat("  ✓ Trait2 model fitted successfully!\n")
-    
-    # =========================================================================
-    # PREDICTIONS
-    # =========================================================================
-    
-    preds <- predict(model, newdata = test_data_traits) %>%
-      as_tibble() %>%
-      mutate(
-        species = test_data_traits$species,
-        year = test_data_traits$year,
-        model = "trait2"
-      )
-    
-    # =========================================================================
-    # FORECASTS & CRPS
-    # =========================================================================
-    
-    fc <- forecast(model, newdata = test_data_traits)
+    fc <- forecast(model, newdata = test_enriched)
     crps <- extract_crps_mvgam(fc, model_name = "trait2")
     
-    cat("  ✓ Trait2 model complete!\n\n")
-    
-    return(list(
-      preds = preds,
-      crps = crps,
-      model_object = model
-    ))
+    return(list(fc = fc, crps = crps))
     
   }, error = function(e) {
     cat("  ✗ Trait2 model failed\n")
-    warning("Trait2 model error: ", e$message)
-    cat("  Error details:\n")
-    print(e)
+    warning("Trait2 model failed: ", e$message)
     return(NULL)
   })
 }
