@@ -10,7 +10,7 @@ default:
     include_regions: []
     exclude_colonies: []
     include_colonies: []
-    run_by_region: false          
+    run_by_region: true          
   
   # Model selection
   models:
@@ -18,6 +18,7 @@ default:
       - baseline
       - ar
       - ar_exog
+      - ar_exog_plus
       - species_specific
       - trait
     fable:
@@ -127,6 +128,7 @@ test_colony_subset:
   spatial:
     level: colony
     min_years_required: 20
+    run_by_region: true
     include_colonies:
       - hidden
       - alley_north
@@ -144,7 +146,7 @@ test_colony_subset:
 # Production runs
 production:
   inherits: default
-  run_mvgam: false
+  run_mvgam: true
   run_fable: true
   chains: 4
   burnin: 2000
@@ -158,6 +160,28 @@ no_ordinal:
     mvgam:
       - baseline
       - ar
+      
+      
+# Test fable only
+test_fable_only:
+  inherits: default
+  models:
+    mvgam:
+      - baseline
+      - ar
+    fable:
+      - baseline
+      - arima
+      - tslm
+      - arima_exog
+      - gam
+  run_mvgam: false      # Disable mvgam
+  run_fable: true       # Enable fable
+  train_years: 15       # Smaller window for faster testing
+  use_ordinal: true     # Test the RPS fix
+  
+  
+  
 
 # Test fixed vs adaptive ordinal breaks
 fixed_breaks:

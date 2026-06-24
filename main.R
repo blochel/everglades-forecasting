@@ -9,6 +9,8 @@ start_time <- Sys.time()
 # =============================================================================
 # LIBRARY LOADING
 # =============================================================================
+library(config)
+library(conflicted)
 library(distributional)  # vectorised probability distribution
 library(dplyr)           # data manipulation
 library(ggplot2)         # figures
@@ -20,7 +22,7 @@ library(mvgam)           # dgam models
 library(verification)    # RPS
 
 # Handle namespace conflicts
-library(conflicted)
+
 conflict_prefer("filter",    "dplyr")
 conflict_prefer("select",    "dplyr")
 conflict_prefer("AR",        "mvgam")
@@ -300,7 +302,7 @@ cat("Config saved to:", config_filename, "\n")
 # GENERATE PLOTS
 # =============================================================================
 cat("\n=== Generating Plots ===\n")
-generate_plots(results, CONFIG)
+generate_plots(results, CONFIG, data = data)
 
 # =============================================================================
 # SUMMARY

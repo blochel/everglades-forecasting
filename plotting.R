@@ -1,11 +1,20 @@
-
-# plotting ----------------------------------------------------------------
-
-
+# plotting.R
+# =============================================================================
+# LIBRARIES
+# =============================================================================
 library(ggplot2)          # figures
-library(dplyr)            # data manipulation 
+library(dplyr)            # data manipulation
 library(tidyr)            # data structure
+library(gridExtra)        # grid.arrange for multi-panel plots
 
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+# =============================================================================
+# MAIN PLOTTING ORCHESTRATION
+# =============================================================================
 generate_plots <- function(results, config, data = NULL) {
   
   # Only plot fable if metrics exist and have rows
@@ -14,10 +23,12 @@ generate_plots <- function(results, config, data = NULL) {
       nrow(results$fable$metrics) > 0) {
     cat("\n=== Generating Fable plots ===\n")
     plot_fable_results(results$fable$metrics)
+    
+    # Spatial comparison (if function exists)
     if (!is.null(config$spatial) &&
-        config$spatial$level != "all") {
-      plot_spatial_comparison(results$fable$metrics,
-                              config, "fable")
+        config$spatial$level != "all" &&
+        exists("plot_spatial_comparison")) {
+      plot_spatial_comparison(results$fable$metrics, config, "fable")
     }
   }
   
@@ -27,16 +38,19 @@ generate_plots <- function(results, config, data = NULL) {
       nrow(results$mvgam$metrics) > 0) {
     cat("\n=== Generating mvgam plots ===\n")
     plot_mvgam_results(results$mvgam$metrics)
+    
+    # Spatial comparison (if function exists)
     if (!is.null(config$spatial) &&
-        config$spatial$level != "all") {
-      plot_spatial_comparison(results$mvgam$metrics,
-                              config, "mvgam")
+        config$spatial$level != "all" &&
+        exists("plot_spatial_comparison")) {
+      plot_spatial_comparison(results$mvgam$metrics, config, "mvgam")
     }
   }
   
-  # Regional plots
+  # Regional plots (if function exists)
   if (!is.null(results$by_region) &&
-      length(results$by_region) > 0) {
+      length(results$by_region) > 0 &&
+      exists("plot_regional_results")) {
     cat("\n=== Generating Regional plots ===\n")
     plot_regional_results(results$by_region, config)
   }
@@ -46,37 +60,122 @@ generate_plots <- function(results, config, data = NULL) {
       !is.null(config$plots) &&
       isTRUE(config$plots$forecast_timeseries)) {
     cat("\n=== Generating forecast time series plots ===\n")
+    
     if (!is.null(results$mvgam) &&
         nrow(results$mvgam$forecasts) > 0) {
       png("results/mvgam_forecast_ts_grid.png",
           width = 14, height = 10, units = "in", res = 300)
       plot_forecast_ts_grid(
         results, data,
-        models    = config$plots$ts_models %||%
-          c("baseline", "ar"),
-        species   = config$plots$ts_species %||%
-          c("gbhe", "greg"),
+        models    = config$plots$ts_models %||% c("baseline", "ar"),
+        species   = config$plots$ts_species %||% c("gbhe", "greg"),
         framework = "mvgam"
       )
       dev.off()
     }
+    
     if (!is.null(results$fable) &&
         nrow(results$fable$forecasts) > 0) {
       png("results/fable_forecast_ts_grid.png",
           width = 14, height = 10, units = "in", res = 300)
       plot_forecast_ts_grid(
         results, data,
-        models    = config$plots$ts_models %||%
-          c("baseline", "arima"),
-        species   = config$plots$ts_species %||%
-          c("gbhe", "greg"),
+        models    = config$plots$ts_models %||% c("baseline", "arima"),
+        species   = config$plots$ts_species %||% c("gbhe", "greg"),
         framework = "fable"
       )
       dev.off()
     }
   }
+  
+  # Forecast interval plots - one per species/model combo
+  if (!is.null(data)) {
+    cat("\n=== Generating forecast interval plots ===\n")
+    
+    # Create forecasts directory
+    if (!dir.exists("results/forecasts")) {
+      dir.create("results/forecasts", recursive = TRUE)
+    }
+    
+    # mvgam plots
+    if (!is.null(results$mvgam) && 
+        !is.null(results$mvgam$forecasts) &&
+        nrow(results$mvgam$forecasts) > 0) {
+      
+      forecasts_mvgam <- results$mvgam$forecasts
+      test_start <- max(forecasts_mvgam$test_start)
+      
+      # Get unique species and models (excluding baseline)
+      species_list <- unique(forecasts_mvgam$species)
+      model_list <- setdiff(unique(forecasts_mvgam$model), "baseline")
+      
+      cat("  Generating", length(species_list) * length(model_list), 
+          "mvgam forecast plots...\n")
+      
+      for (sp in species_list) {
+        for (mod in model_list) {
+          tryCatch({
+            p <- plot_forecast_with_intervals(
+              results, data,
+              model = mod,
+              species = sp,
+              test_start = test_start,
+              framework = "mvgam"
+            )
+            
+            filename <- sprintf("results/forecasts/mvgam_%s_%s.png", sp, mod)
+            ggsave(filename, p, width = 10, height = 6)
+            cat("    Saved:", filename, "\n")
+          }, error = function(e) {
+            cat("    Warning: Could not create plot for", sp, "-", mod, "\n")
+          })
+        }
+      }
+    }
+    
+    # fable plots
+    if (!is.null(results$fable) && 
+        !is.null(results$fable$forecasts) &&
+        nrow(results$fable$forecasts) > 0) {
+      
+      forecasts_fable <- as_tibble(results$fable$forecasts)
+      test_start <- max(forecasts_fable$test_start)
+      
+      # Get unique species and models (excluding baseline)
+      species_list <- unique(forecasts_fable$species)
+      model_list <- setdiff(unique(forecasts_fable$.model), "baseline")
+      
+      cat("  Generating", length(species_list) * length(model_list), 
+          "fable forecast plots...\n")
+      
+      for (sp in species_list) {
+        for (mod in model_list) {
+          tryCatch({
+            p <- plot_forecast_with_intervals(
+              results, data,
+              model = mod,
+              species = sp,
+              test_start = test_start,
+              framework = "fable"
+            )
+            
+            filename <- sprintf("results/forecasts/fable_%s_%s.png", sp, mod)
+            ggsave(filename, p, width = 10, height = 6)
+            cat("    Saved:", filename, "\n")
+          }, error = function(e) {
+            cat("    Warning: Could not create plot for", sp, "-", mod, "\n")
+          })
+        }
+      }
+    }
+    
+    cat("  All forecast interval plots saved to results/forecasts/\n")
+  }
 }
 
+# =============================================================================
+# FABLE RESULTS PLOTTING
+# =============================================================================
 plot_fable_results <- function(metrics) {
   
   # 1. CRPS Skill over time
@@ -92,7 +191,6 @@ plot_fable_results <- function(metrics) {
          color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
-  
   print(p1)
   ggsave("results/fable_crps_skill_over_time.png", p1, width = 12, height = 8)
   
@@ -110,7 +208,6 @@ plot_fable_results <- function(metrics) {
            color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
-    
     print(p2)
     ggsave("results/fable_rps_skill_over_time.png", p2, width = 12, height = 8)
   }
@@ -118,13 +215,13 @@ plot_fable_results <- function(metrics) {
   # 3. Combined metrics plot
   metrics_long <- metrics |>
     filter(.model != "baseline") |>
-    dplyr::select(.model, species, test_start, crps_skill, rmse_skill, 
+    dplyr::select(.model, species, test_start, crps_skill, rmse_skill,
                   any_of("rps_skill")) |>
     pivot_longer(cols = ends_with("_skill"),
                  names_to = "metric",
                  values_to = "skill")
   
-  p3 <- ggplot(metrics_long, 
+  p3 <- ggplot(metrics_long,
                aes(x = test_start, y = skill, color = .model, group = .model)) +
     geom_line(linewidth = 0.8) +
     geom_point(size = 1.5) +
@@ -136,7 +233,6 @@ plot_fable_results <- function(metrics) {
          color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
-  
   print(p3)
   ggsave("results/fable_all_skills_over_time.png", p3, width = 14, height = 10)
   
@@ -158,23 +254,19 @@ plot_fable_results <- function(metrics) {
     theme_minimal() +
     theme(legend.position = "bottom",
           axis.text.x = element_text(angle = 45, hjust = 1))
-  
   print(p4)
   ggsave("results/fable_best_model_counts.png", p4, width = 12, height = 8)
   
   cat("Fable plots saved!\n")
 }
 
-
-
-
-
-
-
+# =============================================================================
+# MVGAM RESULTS PLOTTING
+# =============================================================================
 plot_mvgam_results <- function(metrics) {
+  
   # Check if we have non-baseline models
   non_baseline_metrics <- metrics |> filter(model != "baseline")
-  
   if (nrow(non_baseline_metrics) == 0) {
     cat("Warning: Only baseline model exists. No comparison plots to generate.\n")
     cat("Available models:", paste(unique(metrics$model), collapse = ", "), "\n")
@@ -194,7 +286,6 @@ plot_mvgam_results <- function(metrics) {
          color = "Model") +
     theme_minimal() +
     theme(legend.position = "bottom")
-  
   print(p1)
   ggsave("results/mvgam_crps_skill_over_time.png", p1, width = 12, height = 8)
   
@@ -212,7 +303,6 @@ plot_mvgam_results <- function(metrics) {
            color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
-    
     print(p2)
     ggsave("results/mvgam_rps_skill_over_time.png", p2, width = 12, height = 8)
     
@@ -224,7 +314,7 @@ plot_mvgam_results <- function(metrics) {
                    names_to = "metric",
                    values_to = "skill")
     
-    p3 <- ggplot(metrics_long, 
+    p3 <- ggplot(metrics_long,
                  aes(x = test_start, y = skill, color = model, group = model)) +
       geom_line(linewidth = 0.8) +
       geom_point(size = 1.5) +
@@ -236,7 +326,6 @@ plot_mvgam_results <- function(metrics) {
            color = "Model") +
       theme_minimal() +
       theme(legend.position = "bottom")
-    
     print(p3)
     ggsave("results/mvgam_all_skills_over_time.png", p3, width = 14, height = 10)
   }
@@ -293,23 +382,9 @@ plot_mvgam_results <- function(metrics) {
   cat("mvgam plots saved!\n")
 }
 
-
-
-
-
-#' Plot forecast time series with prediction intervals
-#'
-#' @param results Results object from fit_sliding_window (mvgam or fable)
-#' @param data Original data tsibble with observations
-#' @param model Character, which model to plot
-#' @param species Character, which species to plot  
-#' @param test_start Integer, which test window to plot (forecast origin year)
-#' @param framework Character, "mvgam" or "fable"
-#' @param historic_start Integer, earliest year to show on plot (default: earliest in data)
-#'
-# Replace the plot_forecast_ts function in plotting.R with this fixed version:
-
-#' Plot forecast time series with prediction intervals
+# =============================================================================
+# FORECAST TIME SERIES PLOTS (Base R style)
+# =============================================================================
 plot_forecast_ts <- function(results,
                              data,
                              model = NULL,
@@ -332,10 +407,12 @@ plot_forecast_ts <- function(results,
     model <- unique(forecasts[[model_col]])[2]
     cat("Using model:", model, "\n")
   }
+  
   if (is.null(species)) {
     species <- unique(forecasts$species)[1]
     cat("Using species:", species, "\n")
   }
+  
   if (is.null(test_start)) {
     test_start <- min(forecasts$test_start)
     cat("Using test_start:", test_start, "\n")
@@ -346,7 +423,6 @@ plot_forecast_ts <- function(results,
       dplyr::filter(model == !!model, species == !!species, test_start == !!test_start) %>%
       dplyr::select(year, estimate = Estimate, lower_pi = Q2.5, upper_pi = Q97.5)
   } else {
-    # FABLE: Extract quantiles from distribution column
     preds <- forecasts %>%
       dplyr::filter(.model == !!model, species == !!species, test_start == !!test_start) %>%
       dplyr::mutate(
@@ -379,16 +455,15 @@ plot_forecast_ts <- function(results,
   par(mar = c(4, 5, 3, 1))
   plot(1, 1, type = "n", bty = "L", xlab = "Year", ylab = "Count",
        xlim = rangex, ylim = rangey, cex.lab = 1.5, cex.axis = 1.25, las = 1)
-  
   title(main = paste0(species, " - ", model, " (forecast from ", test_start, ")"), cex.main = 1.25)
   
   last_obs_year <- max(obs$year[obs$year < first_pred & !is.na(obs$count)])
   last_obs_count <- obs$count[obs$year == last_obs_year]
+  
   preds$lower_pi <- pmax(0, preds$lower_pi)
   
   poly_x <- c(last_obs_year, preds$year, rev(preds$year), last_obs_year)
   poly_y <- c(last_obs_count, preds$lower_pi, rev(preds$upper_pi), last_obs_count)
-  
   polygon(poly_x, poly_y, col = rgb(0.68, 0.84, 0.9, 0.6), border = NA)
   
   points(c(last_obs_year, preds$year), c(last_obs_count, preds$estimate),
@@ -417,5 +492,184 @@ plot_forecast_ts <- function(results,
   invisible(NULL)
 }
 
-# Helper function
-`%||%` <- function(x, y) if (is.null(x)) y else x
+plot_forecast_ts_grid <- function(results,
+                                  data,
+                                  models = NULL,
+                                  species = NULL,
+                                  framework = "mvgam") {
+  
+  # Get defaults
+  if (framework == "mvgam") {
+    forecasts <- results$mvgam$forecasts
+    if (is.null(models)) models <- unique(forecasts$model)[1:2]
+    if (is.null(species)) species <- unique(forecasts$species)[1:2]
+  } else {
+    forecasts <- results$fable$forecasts %>% as_tibble()
+    if (is.null(models)) models <- unique(forecasts$.model)[1:2]
+    if (is.null(species)) species <- unique(forecasts$species)[1:2]
+  }
+  
+  test_start <- max(forecasts$test_start)
+  
+  # Setup grid
+  n_models <- length(models)
+  n_species <- length(species)
+  par(mfrow = c(n_species, n_models))
+  
+  # Plot each combination
+  for (sp in species) {
+    for (mod in models) {
+      plot_forecast_ts(results, data, mod, sp, test_start, framework)
+    }
+  }
+  
+  invisible(NULL)
+}
+
+# =============================================================================
+# FORECAST INTERVAL PLOTS
+# =============================================================================
+plot_forecast_with_intervals <- function(results,
+                                         data,
+                                         model,
+                                         species,
+                                         test_start,
+                                         framework = "mvgam",
+                                         historic_years = 20) {
+  
+  # Extract forecasts
+  if (framework == "mvgam") {
+    forecasts <- results$mvgam$forecasts
+    model_col <- "model"
+  } else if (framework == "fable") {
+    forecasts <- results$fable$forecasts %>% as_tibble()
+    model_col <- ".model"
+  } else {
+    stop("framework must be 'mvgam' or 'fable'")
+  }
+  
+  # Get forecast data for this model/species/window
+  if (framework == "mvgam") {
+    preds <- forecasts %>%
+      filter(model == !!model, species == !!species, test_start == !!test_start) %>%
+      mutate(
+        median = Estimate,
+        lower_95 = Q2.5,
+        upper_95 = Q97.5,
+        # Calculate 80% interval from normal approximation
+        # 80% CI uses z = 1.28 (vs 1.96 for 95%)
+        lower_80 = Estimate - 1.28 * Est.Error,
+        upper_80 = Estimate + 1.28 * Est.Error
+      ) %>%
+      select(year, median, lower_95, upper_95, lower_80, upper_80)
+  } else {
+    preds <- forecasts %>%
+      filter(.model == !!model, species == !!species, test_start == !!test_start) %>%
+      mutate(
+        median = .mean,
+        lower_95 = quantile(count, 0.025),
+        upper_95 = quantile(count, 0.975),
+        lower_80 = quantile(count, 0.10),
+        upper_80 = quantile(count, 0.90)
+      ) %>%
+      select(year, median, lower_95, upper_95, lower_80, upper_80)
+  }
+  
+  if (nrow(preds) == 0) {
+    stop("No forecasts found for specified model/species/test_start")
+  }
+  
+  # Get historical observations
+  first_forecast <- min(preds$year)
+  start_year <- first_forecast - historic_years
+  
+  obs <- data %>%
+    as_tibble() %>%
+    filter(species == !!species, year >= start_year) %>%
+    select(year, count)
+  
+  # Create plot
+  p <- ggplot() +
+    # Historical observed line
+    geom_line(data = obs %>% filter(year < first_forecast),
+              aes(x = year, y = count),
+              linewidth = 1, color = "black") +
+    # 95% prediction interval
+    geom_ribbon(data = preds,
+                aes(x = year, ymin = pmax(0, lower_95), ymax = upper_95, fill = "95%"),
+                alpha = 0.3) +
+    # 80% prediction interval
+    geom_ribbon(data = preds,
+                aes(x = year, ymin = pmax(0, lower_80), ymax = upper_80, fill = "80%"),
+                alpha = 0.5) +
+    # Forecast median line
+    geom_line(data = preds,
+              aes(x = year, y = median),
+              linewidth = 1, color = "#3333CC") +
+    # Observed points in forecast period (if available)
+    geom_line(data = obs %>% filter(year >= first_forecast),
+              aes(x = year, y = count),
+              linewidth = 1, color = "black", linetype = "dashed") +
+    # Vertical line at forecast origin
+    geom_vline(xintercept = first_forecast - 0.5,
+               linetype = "dashed", color = "gray40", linewidth = 0.5) +
+    # Styling
+    scale_y_continuous(labels = scales::comma) +
+    scale_fill_manual(
+      name = "Prediction Interval",
+      values = c("80%" = "#6666FF", "95%" = "#9999FF"),
+      labels = c("80%", "95%")
+    ) +
+    labs(
+      title = paste0(toupper(species), " - ", model,
+                     " (forecast from ", test_start, ")"),
+      x = "Year",
+      y = "Count"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right"
+    )
+  
+  return(p)
+}
+
+
+plot_forecast_grid <- function(results,
+                               data,
+                               models = NULL,
+                               species_list = NULL,
+                               test_start = NULL,
+                               framework = "mvgam") {
+  
+  # Get available models and species
+  if (framework == "mvgam") {
+    forecasts <- results$mvgam$forecasts
+    if (is.null(models)) models <- unique(forecasts$model)[1:2]
+    if (is.null(species_list)) species_list <- unique(forecasts$species)[1:3]
+    if (is.null(test_start)) test_start <- max(forecasts$test_start)
+  } else {
+    forecasts <- results$fable$forecasts %>% as_tibble()
+    if (is.null(models)) models <- unique(forecasts$.model)[1:2]
+    if (is.null(species_list)) species_list <- unique(forecasts$species)[1:3]
+    if (is.null(test_start)) test_start <- max(forecasts$test_start)
+  }
+  
+  # Create plots
+  plot_list <- list()
+  for (sp in species_list) {
+    for (mod in models) {
+      plot_list[[paste(sp, mod, sep = "_")]] <-
+        plot_forecast_with_intervals(
+          results, data, mod, sp, test_start, framework
+        )
+    }
+  }
+  
+  # Arrange in grid
+  ncol <- length(models)
+  
+  gridExtra::grid.arrange(grobs = plot_list, ncol = ncol)
+}
