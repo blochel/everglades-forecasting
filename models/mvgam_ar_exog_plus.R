@@ -20,19 +20,13 @@ fit_mvgam_ar_exog_plus <- function(train_data, test_data, config) {
       samples = config$samples
     )
     
-    preds <- predict(model, newdata = test_data) %>%
-      as_tibble() %>%
-      mutate(
-        species = test_data$species,
-        year = test_data$year,
-        model = "ar_exog_plus"
-      )
-    
     fc <- forecast(model, newdata = test_data)
     crps <- extract_crps_mvgam(fc, model_name = "ar_exog_plus")
     
-    return(list(preds = preds, crps = crps))
+    return(list(fc = fc, crps = crps))
+    
   }, error = function(e) {
+    cat("  ✗ AR exog plus model failed\n")
     warning("AR exog plus model failed: ", e$message)
     return(NULL)
   })
