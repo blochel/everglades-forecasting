@@ -149,7 +149,9 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config,
                                 precomputed_breaks = NULL) {
   cat("  Calculating RPS...\n")
   
-  has_region <- "region" %in% names(test_data)
+  # has_region = TRUE only when multiple distinct spatial units exist
+  has_region <- "region" %in% names(test_data) &&
+    length(unique(test_data$region)) > 1
   
   # Get or compute ordinal breaks
   if (!is.null(precomputed_breaks)) {
@@ -281,7 +283,10 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
   # DETECT SPATIAL LEVEL
   # =========================================================================
   
-  has_region <- "region" %in% names(train_data)
+  # has_region = TRUE only when multiple distinct spatial units exist
+  # At "all" level, region = "all" for every row so treat as system-wide
+  has_region <- "region" %in% names(train_data) &&
+    length(unique(train_data$region)) > 1
   min_year   <- min(train_data$year)
   
   cat(glue::glue("  Spatial level: {ifelse(has_region, 'subregion/colony', 'system-wide')}\n"))
@@ -291,6 +296,7 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
   # =========================================================================
   
   if (has_region) {
+    # Subregion/colony: series = species_region (e.g. "gbhe_1", "wost_3an")
     all_series <- unique(c(
       paste(train_data$species, train_data$region, sep = "_"),
       paste(test_data$species,  test_data$region,  sep = "_")
@@ -313,6 +319,7 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
       as.data.frame()
     
   } else {
+    # System-wide: series = species only
     all_series <- unique(c(train_data$species, test_data$species))
     
     train_data <- train_data |>
@@ -445,7 +452,8 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
         )
     } else {
       fc_out <- fc_out |>
-        mutate(species = series_id)
+        mutate(species = series_id) |>
+        select(-any_of("region"))  # Remove if it crept in
     }
     
     fc_out |>
@@ -462,7 +470,7 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
   
   na_count <- sum(is.na(all_preds$year))
   if (na_count > 0) {
-    warning(glue::glue("{na_count} predictions have NA years"))
+    warning(glue::glue("  ⚠️  {na_count} predictions have NA years"))
   } else {
     cat("  ✓ All forecasts have valid years\n")
   }
@@ -476,22 +484,28 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
   # =========================================================================
   
   if (has_region) {
+    # series = "species_region" e.g. "gbhe_1", "wost_3an"
     all_crps <- all_crps |>
       mutate(
         species = sub("_[^_]+$", "", series),
         region  = sub(".*_",     "", series)
       )
   } else {
+    # series = species only e.g. "gbhe", "wost"
     all_crps <- all_crps |>
-      mutate(species = series)
+      mutate(species = series) |>
+      select(-any_of("region"))  # Remove region if it crept in
   }
   
   # =========================================================================
   # CALCULATE CRPS SKILL SCORES
   # =========================================================================
   
-  group_vars    <- if (has_region) c("model", "species", "region") else c("model", "species")
-  baseline_vars <- if (has_region) c("species", "region")           else "species"
+  # Re-detect has_region from CRPS data to avoid trait model column issues
+  has_region_crps <- has_region && "region" %in% names(all_crps)
+  
+  group_vars    <- if (has_region_crps) c("model", "species", "region") else c("model", "species")
+  baseline_vars <- if (has_region_crps) c("species", "region")           else "species"
   
   baseline_summary <- all_crps |>
     filter(model == "baseline") |>
