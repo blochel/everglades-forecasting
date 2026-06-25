@@ -83,14 +83,27 @@ fit_sliding_window <- function(data,
       list(predictions = tibble(), metrics = tibble())
     })
     
-    list(
-      forecasts = forecast_and_metrics[[1]] |>
-        mutate(test_start = test_starts[i], window = i) |>
-        as_tibble(),
-      metrics = forecast_and_metrics[[2]] |>
-        mutate(test_start = test_starts[i], window = i) |>
-        as_tibble()
-    )
+    # Safely convert forecasts - handles both fable and mvgam objects
+    fc_out <- tryCatch({
+      forecast_and_metrics[[1]] |>
+        as_tibble() |>
+        mutate(test_start = test_starts[i], window = i)
+    }, error = function(e) {
+      warning(glue::glue("Could not convert forecasts for window {i}: {e$message}"))
+      tibble()
+    })
+    
+    # Safely convert metrics
+    met_out <- tryCatch({
+      forecast_and_metrics[[2]] |>
+        as_tibble() |>
+        mutate(test_start = test_starts[i], window = i)
+    }, error = function(e) {
+      warning(glue::glue("Could not convert metrics for window {i}: {e$message}"))
+      tibble()
+    })
+    
+    list(forecasts = fc_out, metrics = met_out)
   })
   
   cat("\n=== Combining results ===\n")
@@ -181,10 +194,10 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config,
     left_join(quantiles_by_group, by = join_vars) |>
     rowwise() |>
     mutate(
-      pred_sd       = pmax((Q97.5 - Q2.5) / (2 * 1.96), 0.1),
-      prob_low      = pnorm(low,    mean = Estimate, sd = pred_sd),
-      prob_medium   = pnorm(medium, mean = Estimate, sd = pred_sd) - prob_low,
-      prob_high     = pnorm(high,   mean = Estimate, sd = pred_sd) -
+      pred_sd        = pmax((Q97.5 - Q2.5) / (2 * 1.96), 0.1),
+      prob_low       = pnorm(low,    mean = Estimate, sd = pred_sd),
+      prob_medium    = pnorm(medium, mean = Estimate, sd = pred_sd) - prob_low,
+      prob_high      = pnorm(high,   mean = Estimate, sd = pred_sd) -
         pnorm(medium, mean = Estimate, sd = pred_sd),
       prob_very_high = 1 - pnorm(high, mean = Estimate, sd = pred_sd)
     ) |>
@@ -197,13 +210,18 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config,
     group_by(across(all_of(rps_group_vars))) |>
     summarise(
       rps = {
-        # Build observation vector
-        filter_args <- list(species == unique(species))
-        if (has_region) filter_args[["region"]] <- unique(region)
+        cur_species <- unique(species)
         
-        obs_cat <- test_data_ordinal |>
-          filter(species == unique(species),
-                 if (has_region) region == unique(region) else TRUE) |>
+        obs_filtered <- if (has_region) {
+          cur_region <- unique(region)
+          test_data_ordinal |>
+            filter(species == cur_species, region == cur_region)
+        } else {
+          test_data_ordinal |>
+            filter(species == cur_species)
+        }
+        
+        obs_cat <- obs_filtered |>
           pull(count_category) |>
           as.numeric()
         
@@ -227,7 +245,7 @@ calculate_rps_mvgam <- function(predictions, test_data, train_data, config,
   rps_by_model |>
     left_join(baseline_rps, by = baseline_join_vars) |>
     mutate(rps_skill = if_else(
-      is.na(rps_baseline) | rps_baseline == 0,
+      is.na(rps_baseline) | is.nan(rps_baseline) | rps_baseline == 0,
       NA_real_,
       1 - rps / rps_baseline
     ))
@@ -273,7 +291,6 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
   # =========================================================================
   
   if (has_region) {
-    # Subregion/colony: series = species_region (e.g., "gbhe_1", "wost_3an")
     all_series <- unique(c(
       paste(train_data$species, train_data$region, sep = "_"),
       paste(test_data$species,  test_data$region,  sep = "_")
@@ -296,7 +313,6 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
       as.data.frame()
     
   } else {
-    # System-wide: series = species
     all_series <- unique(c(train_data$species, test_data$species))
     
     train_data <- train_data |>
@@ -398,7 +414,6 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
     
     if (is.null(result$fc)) return(tibble())
     
-    # Get forecast summary
     fc_summary <- summary(result$fc)
     
     # Keep only actual forecast rows (not hindcasts)
@@ -447,7 +462,7 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
   
   na_count <- sum(is.na(all_preds$year))
   if (na_count > 0) {
-    warning(glue::glue("  ⚠️  {na_count} predictions have NA years"))
+    warning(glue::glue("{na_count} predictions have NA years"))
   } else {
     cat("  ✓ All forecasts have valid years\n")
   }
@@ -490,7 +505,7 @@ make_mvgam_forecasts <- function(train_data, test_data, models_to_run,
       crps          = mean(score, na.rm = TRUE),
       crps_baseline = first(crps_baseline),
       crps_skill    = if_else(
-        is.na(crps_baseline) | crps_baseline == 0,
+        is.na(crps_baseline) | is.nan(crps_baseline) | crps_baseline == 0,
         NA_real_,
         1 - (crps / crps_baseline)
       ),
@@ -551,15 +566,41 @@ print_cv_summary <- function(cv_results) {
   
   if (!is.null(cv_results$metrics) && nrow(cv_results$metrics) > 0) {
     cat("=== Model Performance ===\n")
-    summary_by_model <- cv_results$metrics |>
-      group_by(model) |>
+    
+    metrics <- cv_results$metrics
+    
+    # Handle both mvgam ("model") and fable (".model") column names
+    if ("model" %in% names(metrics)) {
+      model_col <- "model"
+    } else if (".model" %in% names(metrics)) {
+      model_col <- ".model"
+    } else {
+      cat("No model column found in metrics\n")
+      cat("Available columns:", paste(names(metrics), collapse = ", "), "\n")
+      return(invisible(NULL))
+    }
+    
+    # Check for crps column
+    if (!"crps" %in% names(metrics)) {
+      cat("No CRPS column found in metrics\n")
+      cat("Available columns:", paste(names(metrics), collapse = ", "), "\n")
+      return(invisible(NULL))
+    }
+    
+    summary_by_model <- metrics |>
+      group_by(.data[[model_col]]) |>
       summarise(
-        mean_crps  = mean(crps,       na.rm = TRUE),
-        mean_skill = mean(crps_skill, na.rm = TRUE),
-        n_forecasts = sum(n_forecasts, na.rm = TRUE),
+        mean_crps   = mean(crps, na.rm = TRUE),
+        mean_skill  = mean(crps_skill, na.rm = TRUE),
+        n_forecasts = if ("n_forecasts" %in% names(metrics)) {
+          sum(n_forecasts, na.rm = TRUE)
+        } else {
+          n()
+        },
         .groups = "drop"
       ) |>
       arrange(mean_crps)
+    
     print(summary_by_model, n = Inf)
   }
   
