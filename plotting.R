@@ -240,7 +240,7 @@ plot_fable_results <- function(metrics, results_dir = "results") {
 }
 
 # =============================================================================
-# MVGAM RESULTS PLOTTING (UPDATED)
+# MVGAM RESULTS PLOTTING 
 # =============================================================================
 plot_mvgam_results <- function(metrics, results_dir = "results") {
   
@@ -369,18 +369,29 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
   
   if (framework == "mvgam") {
     preds <- forecasts %>%
+      as_tibble() %>%
       dplyr::filter(model == !!model,
                     species == !!species,
                     test_start == !!test_start) %>%
-      dplyr::select(year,
-                    estimate = Estimate,
-                    lower_pi = Q2.5,
-                    upper_pi = Q97.5)
+      dplyr::rename(
+        estimate = Estimate,
+        lower_pi = Q2.5,
+        upper_pi = Q97.5
+      ) %>%
+      dplyr::select(year, estimate, lower_pi, upper_pi)
+    
   } else {
     preds <- forecasts %>%
-      dplyr::filter(.model == !!model, species == !!species, test_start == !!test_start) %>%
-      dplyr::mutate(estimate = .mean, lower_pi = quantile(count, 0.025), 
-                    upper_pi = quantile(count, 0.975)) %>%
+      as_tibble() %>% 
+      dplyr::filter(.model == !!model, 
+                    species == !!species, 
+                    test_start == !!test_start) %>%
+      dplyr::mutate(
+        estimate = .mean,
+        pred_sd  = sqrt(distributional::variance(count)),
+        lower_pi = pmax(0, .mean - 1.96 * pred_sd),
+        upper_pi = .mean + 1.96 * pred_sd
+      ) %>%
       dplyr::select(year, estimate, lower_pi, upper_pi)
   }
   
