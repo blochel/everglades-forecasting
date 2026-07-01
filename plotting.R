@@ -378,6 +378,11 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
         lower_pi = Q2.5,
         upper_pi = Q97.5
       ) %>%
+      dplyr::mutate(
+        estimate = exp(estimate),
+        lower_pi = pmax(0, exp(lower_pi)),
+        upper_pi = exp(upper_pi)
+      ) %>%
       dplyr::select(year, estimate, lower_pi, upper_pi)
     
   } else {
@@ -387,10 +392,8 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
                     species == !!species, 
                     test_start == !!test_start) %>%
       dplyr::mutate(
-        estimate = .mean,
-        pred_sd  = sqrt(distributional::variance(count)),
-        lower_pi = pmax(0, .mean - 1.96 * pred_sd),
-        upper_pi = .mean + 1.96 * pred_sd
+         lower_pi = pmax(0, distributional::quantile(count, 0.025)[[1]]),
+         upper_pi = distributional::quantile(count, 0.975)[[1]]
       ) %>%
       dplyr::select(year, estimate, lower_pi, upper_pi)
   }
