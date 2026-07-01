@@ -5,11 +5,12 @@ fit_mvgam_species_specific <- function(train_data, test_data, config) {
     model <- mvgam(
       formula = count ~ series,
       trend_formula = ~
-        s(breed_season_depth, bs = 'cr', k = 8) +
-        s(dry_days, bs = 'cr', k = 8) +
-        s(breed_season_depth, trend, bs = 'sz', xt = list(bs = 'cr'), k = 6) +
-        s(dry_days, trend, bs = 'sz', xt = list(bs = 'cr'), k = 6),
+        s(breed_season_depth, bs = 'cr', k = 5) +
+        s(dry_days, bs = 'cr', k = 5) +
+        s(breed_season_depth, by = trend, bs = 'fs', k = 4) +
+        s(dry_days, by = trend, bs = 'fs', k = 4),
       trend_model = mvgam::AR(),
+      noncentred = TRUE,
       data = train_data,
       family = nb(),
       chains = config$chains,
