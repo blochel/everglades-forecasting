@@ -1,5 +1,6 @@
 # =============================================================================
 # PLOTTING.R - Visualization functions for forecast results
+# Works for both system-wide and subregional data
 # =============================================================================
 
 # =============================================================================
@@ -16,9 +17,14 @@ library(distributional)
 # =============================================================================
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+#' Check if data has multiple regions
+has_multiple_regions <- function(df) {
+  "region" %in% names(df) && length(unique(df$region)) > 1
+}
+
 #' Aggregate mvgam forecasts across regions (SUM - only complete region sets)
 agg_regions_mvgam <- function(df) {
-  if ("region" %in% names(df) && length(unique(df$region)) > 1) {
+  if (has_multiple_regions(df)) {
     n_max <- length(unique(df$region))
     df |>
       group_by(year) |>
@@ -38,7 +44,7 @@ agg_regions_mvgam <- function(df) {
 
 #' Aggregate observations across regions (SUM)
 agg_regions_obs <- function(df) {
-  if ("region" %in% names(df) && length(unique(df$region)) > 1) {
+  if (has_multiple_regions(df)) {
     df |>
       group_by(year) |>
       summarise(count = sum(count, na.rm = TRUE), .groups = "drop")
@@ -56,27 +62,119 @@ agg_obs_by_species <- function(data, start_year = NULL) {
     summarise(count = sum(count, na.rm = TRUE), .groups = "drop")
 }
 
-#' Sum fable forecasts across regions with variance aggregation
-agg_fable_regions <- function(df) {
-  if ("region" %in% names(df) && length(unique(df$region)) > 1) {
-    n_max <- length(unique(df$region))
-    df |>
+#' Safe y-axis upper bound - covers both obs and forecasts
+safe_y_max <- function(...) {
+  vals <- unlist(list(...))
+  vals <- vals[is.finite(vals)]
+  if (length(vals) == 0) return(100)
+  max(vals, na.rm = TRUE) * 1.1
+}
+
+#' Find most recent test_start where all requested models have forecasts
+find_valid_test_start <- function(forecasts, models, model_col) {
+  valid_windows <- forecasts |>
+    filter(.data[[model_col]] %in% models) |>
+    group_by(test_start) |>
+    summarise(n_models = n_distinct(.data[[model_col]]), .groups = "drop") |>
+    filter(n_models == length(models)) |>
+    pull(test_start)
+  
+  if (length(valid_windows) == 0) max(forecasts$test_start) else max(valid_windows)
+}
+
+#' Get predictions for a single model/species/framework
+get_preds <- function(forecasts, model, species, test_start, framework) {
+  if (framework == "mvgam") {
+    preds_raw <- forecasts |>
+      filter(model == !!model, species == !!species, test_start == !!test_start)
+    
+    agg_regions_mvgam(preds_raw) |>
+      dplyr::rename(estimate = Estimate, lower_pi = Q2.5, upper_pi = Q97.5) |>
+      dplyr::select(year, estimate, lower_pi, upper_pi) |>
+      dplyr::arrange(year) |>
+      dplyr::distinct(year, .keep_all = TRUE)
+    
+  } else {
+    forecasts |>
+      filter(.model == !!model, species == !!species, test_start == !!test_start) |>
       group_by(year) |>
       summarise(
-        n_regions = n(),
-        .mean     = sum(.mean,    na.rm = TRUE),
-        pred_var  = sum(distributional::variance(count), na.rm = TRUE),
-        .groups   = "drop"
+        .mean    = sum(.mean, na.rm = TRUE),
+        pred_var = sum(distributional::variance(count), na.rm = TRUE),
+        .groups  = "drop"
       ) |>
-      filter(n_regions == n_max) |>
-      dplyr::select(-n_regions) |>
-      mutate(pred_sd = sqrt(pred_var))
-  } else {
-    df |>
       mutate(
-        pred_sd  = sqrt(distributional::variance(count))
-      )
+        estimate = .mean,
+        pred_sd  = sqrt(pred_var),
+        lower_pi = pmax(0, .mean - 1.96 * pred_sd),
+        upper_pi = .mean + 1.96 * pred_sd
+      ) |>
+      dplyr::select(year, estimate, lower_pi, upper_pi) |>
+      dplyr::arrange(year) |>
+      dplyr::distinct(year, .keep_all = TRUE)
   }
+}
+
+#' Draw a single base-R forecast time series plot
+draw_ts_plot <- function(preds, obs, species, model, test_start,
+                         historic_years = 25) {
+  
+  first_pred     <- min(preds$year)
+  start_year     <- first_pred - historic_years
+  obs_plot       <- obs |> filter(year >= start_year)
+  rangey         <- c(0, safe_y_max(obs_plot$count, preds$upper_pi))
+  preds$lower_pi <- pmax(0, preds$lower_pi)
+  
+  last_obs_year  <- max(obs_plot$year[obs_plot$year < first_pred & !is.na(obs_plot$count)])
+  last_obs_count <- obs_plot$count[obs_plot$year == last_obs_year]
+  
+  par(mar = c(4, 5, 3, 1))
+  plot(1, 1, type = "n", bty = "L",
+       xlab = "Year", ylab = "Count",
+       xlim = c(start_year, max(preds$year)),
+       ylim = rangey,
+       cex.lab = 1.2, cex.axis = 1.0, las = 1)
+  title(main = paste0(toupper(species), " - ", model,
+                      " (forecast from ", test_start, ")"),
+        cex.main = 1.1)
+  
+  # PI polygon
+  polygon(
+    c(last_obs_year, preds$year, rev(preds$year), last_obs_year),
+    c(last_obs_count, preds$lower_pi, rev(preds$upper_pi), last_obs_count),
+    col = rgb(0.68, 0.84, 0.9, 0.6), border = NA
+  )
+  
+  # Forecast line
+  points(c(last_obs_year, preds$year),
+         c(last_obs_count, preds$estimate),
+         type = "l", lwd = 2, col = rgb(0.2, 0.5, 0.9))
+  
+  # Historic observations
+  obs_hist <- obs_plot |> filter(year < first_pred, !is.na(count))
+  points(obs_hist$year, obs_hist$count, type = "l", lwd = 2, col = "black")
+  points(obs_hist$year, obs_hist$count, pch = 16, col = "white", cex = 1.0)
+  points(obs_hist$year, obs_hist$count, pch = 1,  col = "black", lwd = 2, cex = 1.0)
+  
+  # Future observations
+  obs_fut <- obs_plot |> filter(year >= first_pred, !is.na(count))
+  if (nrow(obs_fut) > 0) {
+    obs_con <- obs_plot |>
+      filter(year >= last_obs_year, year <= max(obs_fut$year), !is.na(count))
+    points(obs_con$year, obs_con$count, type = "l", lwd = 2, col = "black")
+    points(obs_fut$year, obs_fut$count, pch = 16, col = "white", cex = 1.0)
+    points(obs_fut$year, obs_fut$count, pch = 1,  col = "black", lwd = 2, cex = 1.0)
+  }
+  
+  abline(v = first_pred - 0.5, lty = 2, col = "gray50", lwd = 1.5)
+  
+  legend("topleft",
+         legend = c("Observed", "Forecast", "95% PI"),
+         lty    = c(1, 1, NA), lwd = c(2, 2, NA), pch = c(1, NA, 15),
+         col    = c("black", rgb(0.2, 0.5, 0.9), rgb(0.68, 0.84, 0.9, 0.6)),
+         pt.cex = c(1.0, NA, 1.5), bty = "n", cex = 0.9)
+  
+  invisible(NULL)
 }
 
 # =============================================================================
@@ -84,14 +182,15 @@ agg_fable_regions <- function(df) {
 # =============================================================================
 generate_plots <- function(results, config, data = NULL, results_dir = "results") {
   
-  # Ensure directories exist
   if (!dir.exists(results_dir)) dir.create(results_dir, recursive = TRUE)
   forecasts_dir <- file.path(results_dir, "forecasts")
   hindcast_dir  <- file.path(results_dir, "hindcasts")
+  ts_dir        <- file.path(results_dir, "ts_all_models")
   if (!dir.exists(forecasts_dir)) dir.create(forecasts_dir, recursive = TRUE)
   if (!dir.exists(hindcast_dir))  dir.create(hindcast_dir,  recursive = TRUE)
+  if (!dir.exists(ts_dir))        dir.create(ts_dir,        recursive = TRUE)
   
-  # ── Fable metrics plots ──────────────────────────────────────────────────
+  # Fable metrics
   if (!is.null(results$fable) &&
       !is.null(results$fable$metrics) &&
       nrow(results$fable$metrics) > 0) {
@@ -102,7 +201,7 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
     )
   }
   
-  # ── mvgam metrics plots ──────────────────────────────────────────────────
+  # mvgam metrics
   if (!is.null(results$mvgam) &&
       !is.null(results$mvgam$metrics) &&
       nrow(results$mvgam$metrics) > 0) {
@@ -113,7 +212,7 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
     )
   }
   
-  # ── All species faceted plots ────────────────────────────────────────────
+  # All species faceted
   if (!is.null(data)) {
     cat("\n=== Generating all-species faceted plots ===\n")
     
@@ -136,7 +235,7 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
     }
   }
   
-  # ── Forecast time series grid ────────────────────────────────────────────
+  # Forecast time series grid (config-specified models/species)
   if (!is.null(data) &&
       !is.null(config$plots) &&
       isTRUE(config$plots$forecast_timeseries)) {
@@ -180,7 +279,30 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
     }
   }
   
-  # ── Forecast interval plots ──────────────────────────────────────────────
+  # All models time series - one file per species
+  if (!is.null(data)) {
+    cat("\n=== Generating all-models time series plots ===\n")
+    
+    if (!is.null(results$mvgam) && nrow(results$mvgam$forecasts) > 0) {
+      tryCatch(
+        plot_all_models_ts(results, data,
+                           framework   = "mvgam",
+                           results_dir = ts_dir),
+        error = function(e) cat("⚠️  mvgam all-models ts failed:", e$message, "\n")
+      )
+    }
+    
+    if (!is.null(results$fable) && nrow(results$fable$forecasts) > 0) {
+      tryCatch(
+        plot_all_models_ts(results, data,
+                           framework   = "fable",
+                           results_dir = ts_dir),
+        error = function(e) cat("⚠️  fable all-models ts failed:", e$message, "\n")
+      )
+    }
+  }
+  
+  # Forecast interval plots
   if (!is.null(data)) {
     cat("\n=== Generating forecast interval plots ===\n")
     
@@ -203,7 +325,8 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
               results, data, model = mod, species = sp,
               test_start = test_start, framework = "mvgam"
             )
-            ggsave(file.path(forecasts_dir, sprintf("mvgam_%s_%s.png", sp, mod)),
+            ggsave(file.path(forecasts_dir,
+                             sprintf("mvgam_%s_%s.png", sp, mod)),
                    p, width = 10, height = 6)
           }, error = function(e) {
             cat("    ⚠️ ", sp, "-", mod, ":", e$message, "\n")
@@ -231,7 +354,8 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
               results, data, model = mod, species = sp,
               test_start = test_start, framework = "fable"
             )
-            ggsave(file.path(forecasts_dir, sprintf("fable_%s_%s.png", sp, mod)),
+            ggsave(file.path(forecasts_dir,
+                             sprintf("fable_%s_%s.png", sp, mod)),
                    p, width = 10, height = 6)
           }, error = function(e) {
             cat("    ⚠️ ", sp, "-", mod, ":", e$message, "\n")
@@ -243,7 +367,7 @@ generate_plots <- function(results, config, data = NULL, results_dir = "results"
     cat("  All forecast interval plots saved to", forecasts_dir, "\n")
   }
   
-  # ── Hindcast plots ───────────────────────────────────────────────────────
+  # Hindcast plots
   if (!is.null(data)) {
     cat("\n=== Generating hindcast plots ===\n")
     
@@ -449,8 +573,7 @@ plot_all_species_forecasts <- function(results, data,
   
   first_forecast <- min(forecasts$year[forecasts$test_start == test_start])
   start_year     <- first_forecast - historic_years
-  
-  obs <- agg_obs_by_species(data, start_year = start_year)
+  obs            <- agg_obs_by_species(data, start_year = start_year)
   
   if (framework == "mvgam") {
     fc_plot <- forecasts |>
@@ -464,7 +587,7 @@ plot_all_species_forecasts <- function(results, data,
         .groups   = "drop"
       ) |>
       group_by(model, species) |>
-      filter(n_regions == max(n_regions)) |>
+      filter(n_regions == max(n_regions, na.rm = TRUE)) |>
       ungroup() |>
       mutate(
         .mean    = Estimate,
@@ -479,20 +602,16 @@ plot_all_species_forecasts <- function(results, data,
       filter(test_start == !!test_start, .model != "baseline") |>
       group_by(.model, species, year) |>
       summarise(
-        n_regions = n(),
-        .mean     = sum(.mean, na.rm = TRUE),
-        pred_var  = sum(distributional::variance(count), na.rm = TRUE),
-        .groups   = "drop"
+        .mean    = sum(.mean, na.rm = TRUE),
+        pred_var = sum(distributional::variance(count), na.rm = TRUE),
+        .groups  = "drop"
       ) |>
-      group_by(.model, species) |>
-      filter(n_regions == max(n_regions)) |>
-      ungroup() |>
       mutate(
         pred_sd  = sqrt(pred_var),
         lower_80 = pmax(0, .mean - 1.28 * pred_sd),
         upper_80 = .mean + 1.28 * pred_sd
       ) |>
-      dplyr::select(-n_regions, -pred_var)
+      dplyr::select(-pred_var)
   }
   
   p <- ggplot() +
@@ -530,8 +649,97 @@ plot_all_species_forecasts <- function(results, data,
                         glue::glue("{framework}_all_species_forecasts.png"))
   ggsave(filename, p, width = 10, height = 14)
   cat("✓ Saved:", basename(filename), "\n")
-  
   return(invisible(p))
+}
+
+# =============================================================================
+# ALL MODELS TIME SERIES - one grid per species showing all models
+# =============================================================================
+plot_all_models_ts <- function(results, data,
+                               framework      = "mvgam",
+                               results_dir    = "results",
+                               historic_years = 25) {
+  
+  if (framework == "mvgam") {
+    forecasts  <- as_tibble(results$mvgam$forecasts)
+    model_col  <- "model"
+    all_models <- unique(forecasts$model)
+  } else {
+    forecasts  <- as_tibble(results$fable$forecasts)
+    model_col  <- ".model"
+    all_models <- unique(forecasts$.model)
+  }
+  
+  species_list <- unique(forecasts$species)
+  cat("  Generating", length(species_list), "species grids...\n")
+  
+  for (sp in species_list) {
+    
+    obs_raw <- data |> as_tibble() |> dplyr::filter(species == !!sp)
+    obs     <- agg_regions_obs(obs_raw)
+    
+    # Build list of valid models for this species
+    valid_models <- character(0)
+    preds_list   <- list()
+    
+    for (mod in all_models) {
+      available <- forecasts |>
+        filter(.data[[model_col]] == !!mod, species == !!sp) |>
+        pull(test_start)
+      
+      if (length(available) == 0) next
+      
+      ts <- max(available)
+      preds <- tryCatch(
+        get_preds(forecasts, mod, sp, ts, framework),
+        error = function(e) NULL
+      )
+      
+      if (!is.null(preds) && nrow(preds) > 0) {
+        valid_models <- c(valid_models, mod)
+        preds_list[[mod]] <- list(preds = preds, test_start = ts)
+      }
+    }
+    
+    if (length(valid_models) == 0) {
+      cat("  ⚠️  No valid models for", sp, "\n")
+      next
+    }
+    
+    n_models <- length(valid_models)
+    n_cols   <- min(3, n_models)
+    n_rows   <- ceiling(n_models / n_cols)
+    filename <- file.path(results_dir,
+                          sprintf("%s_%s_all_models_ts.png", framework, sp))
+    
+    png(filename,
+        width  = n_cols * 6,
+        height = n_rows * 4,
+        units  = "in", res = 200)
+    
+    par(mfrow = c(n_rows, n_cols))
+    
+    for (mod in valid_models) {
+      tryCatch(
+        draw_ts_plot(
+          preds      = preds_list[[mod]]$preds,
+          obs        = obs,
+          species    = sp,
+          model      = mod,
+          test_start = preds_list[[mod]]$test_start,
+          historic_years = historic_years
+        ),
+        error = function(e) {
+          plot.new()
+          title(main = paste(sp, "-", mod, "(failed)"))
+          cat("    ⚠️  Plot failed for", sp, "-", mod, ":", e$message, "\n")
+        }
+      )
+    }
+    
+    dev.off()
+    cat("  ✓ Saved:", basename(filename), "\n")
+  }
 }
 
 # =============================================================================
@@ -559,23 +767,13 @@ plot_hindcast_forecast <- function(results, data,
   
   if (nrow(fc_all) == 0) stop("No forecasts for ", species, " - ", model)
   
-  # Observations summed across regions
   obs <- data |>
     as_tibble() |>
     filter(species == !!species) |>
     group_by(year) |>
     summarise(count = sum(count, na.rm = TRUE), .groups = "drop")
   
-  # Build uncertainty bands - SUM across regions, only complete sets
   if (framework == "mvgam") {
-    
-    # Determine expected number of regions from forecast window
-    n_regions_expected <- fc_all |>
-      filter(test_start == !!test_start) |>
-      pull(year) |>
-      table() |>
-      max()
-    
     fc_plot <- fc_all |>
       group_by(test_start, year) |>
       summarise(
@@ -585,9 +783,8 @@ plot_hindcast_forecast <- function(results, data,
         Q97.5     = sum(Q97.5,    na.rm = TRUE),
         .groups   = "drop"
       ) |>
-      # Only keep windows where all regions contributed
       group_by(test_start) |>
-      filter(all(n_regions == max(n_regions))) |>
+      filter(n_regions == max(n_regions, na.rm = TRUE)) |>
       ungroup() |>
       mutate(
         .mean       = Estimate,
@@ -602,18 +799,13 @@ plot_hindcast_forecast <- function(results, data,
       dplyr::select(-n_regions)
     
   } else {
-    
     fc_plot <- fc_all |>
-      group_by(test_start, species, year) |>
+      group_by(test_start, year) |>
       summarise(
-        n_regions = n(),
-        .mean     = sum(.mean, na.rm = TRUE),
-        pred_var  = sum(distributional::variance(count), na.rm = TRUE),
-        .groups   = "drop"
+        .mean    = sum(.mean, na.rm = TRUE),
+        pred_var = sum(distributional::variance(count), na.rm = TRUE),
+        .groups  = "drop"
       ) |>
-      group_by(test_start) |>
-      filter(all(n_regions == max(n_regions))) |>
-      ungroup() |>
       mutate(
         pred_sd     = sqrt(pred_var),
         lower_50    = pmax(0, .mean - 0.674 * pred_sd),
@@ -624,15 +816,14 @@ plot_hindcast_forecast <- function(results, data,
         upper_95    = .mean + 1.96  * pred_sd,
         is_forecast = test_start == !!test_start
       ) |>
-      dplyr::select(-n_regions, -pred_var)
+      dplyr::select(-pred_var)
   }
   
-  if (nrow(fc_plot) == 0) stop("No complete region data for ", species, " - ", model)
+  if (nrow(fc_plot) == 0) stop("No complete data for ", species, " - ", model)
   
   forecast_start <- min(fc_plot$year[fc_plot$is_forecast])
   
   p <- ggplot() +
-    # Hindcast bands
     geom_ribbon(data = fc_plot |> filter(!is_forecast),
                 aes(x = year, ymin = pmax(0, lower_95), ymax = upper_95),
                 fill = "grey80", alpha = 0.5) +
@@ -645,7 +836,6 @@ plot_hindcast_forecast <- function(results, data,
     geom_line(data = fc_plot |> filter(!is_forecast),
               aes(x = year, y = .mean),
               color = "grey30", linewidth = 0.5, linetype = "dashed") +
-    # Forecast bands
     geom_ribbon(data = fc_plot |> filter(is_forecast),
                 aes(x = year, ymin = pmax(0, lower_95), ymax = upper_95),
                 fill = "#CC4444", alpha = 0.2) +
@@ -658,10 +848,8 @@ plot_hindcast_forecast <- function(results, data,
     geom_line(data = fc_plot |> filter(is_forecast),
               aes(x = year, y = .mean),
               color = "#CC4444", linewidth = 1) +
-    # Observations
     geom_point(data = obs, aes(x = year, y = count),
                size = 2.5, color = "black") +
-    # Forecast origin
     geom_vline(xintercept = forecast_start - 0.5,
                linetype = "dashed", color = "black", linewidth = 0.8) +
     scale_y_continuous(labels = scales::comma) +
@@ -678,7 +866,6 @@ plot_hindcast_forecast <- function(results, data,
                         glue::glue("{framework}_{model}_{species}_hindcast.png"))
   ggsave(filename, p, width = 10, height = 6)
   cat("  ✓ Saved:", basename(filename), "\n")
-  
   return(invisible(p))
 }
 
@@ -717,12 +904,10 @@ plot_forecast_with_intervals <- function(results, data, model, species,
       filter(.model == !!model, species == !!species, test_start == !!test_start) |>
       group_by(year) |>
       summarise(
-        n_regions = n(),
-        .mean     = sum(.mean, na.rm = TRUE),
-        pred_var  = sum(distributional::variance(count), na.rm = TRUE),
-        .groups   = "drop"
+        .mean    = sum(.mean, na.rm = TRUE),
+        pred_var = sum(distributional::variance(count), na.rm = TRUE),
+        .groups  = "drop"
       ) |>
-      filter(n_regions == max(n_regions)) |>
       mutate(
         pred_sd  = sqrt(pred_var),
         median   = .mean,
@@ -740,14 +925,15 @@ plot_forecast_with_intervals <- function(results, data, model, species,
   
   first_forecast <- min(preds$year)
   start_year     <- first_forecast - historic_years
-  
   obs_raw <- data |> as_tibble() |>
     filter(species == !!species, year >= start_year)
-  obs <- agg_regions_obs(obs_raw)
+  obs   <- agg_regions_obs(obs_raw)
+  y_max <- safe_y_max(obs$count, preds$upper_95)
   
   ggplot() +
     geom_line(data = obs |> filter(year < first_forecast),
-              aes(x = year, y = count), linewidth = 1, color = "black") +
+              aes(x = year, y = count),
+              linewidth = 1, color = "black") +
     geom_ribbon(data = preds,
                 aes(x = year, ymin = pmax(0, lower_95),
                     ymax = upper_95, fill = "95%"), alpha = 0.3) +
@@ -761,7 +947,7 @@ plot_forecast_with_intervals <- function(results, data, model, species,
               linewidth = 1, color = "black", linetype = "dashed") +
     geom_vline(xintercept = first_forecast - 0.5,
                linetype = "dashed", color = "gray40", linewidth = 0.5) +
-    scale_y_continuous(labels = scales::comma) +
+    scale_y_continuous(labels = scales::comma, limits = c(0, y_max)) +
     scale_fill_manual(name   = "Prediction Interval",
                       values = c("80%" = "#6666FF", "95%" = "#9999FF")) +
     labs(title = paste0(toupper(species), " - ", model,
@@ -774,7 +960,7 @@ plot_forecast_with_intervals <- function(results, data, model, species,
 }
 
 # =============================================================================
-# FORECAST TIME SERIES PLOTS (Base R)
+# FORECAST TIME SERIES PLOTS (Base R - individual)
 # =============================================================================
 plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
                              test_start = NULL, framework = "mvgam",
@@ -788,100 +974,26 @@ plot_forecast_ts <- function(results, data, model = NULL, species = NULL,
     model_col <- ".model"
   }
   
-  if (is.null(model))      model      <- unique(forecasts[[model_col]])[2]
-  if (is.null(species))    species    <- unique(forecasts$species)[1]
-  if (is.null(test_start)) test_start <- min(forecasts$test_start)
+  if (is.null(model))   model   <- unique(forecasts[[model_col]])[2]
+  if (is.null(species)) species <- unique(forecasts$species)[1]
   
-  if (framework == "mvgam") {
-    preds_raw <- forecasts |>
-      dplyr::filter(model == !!model, species == !!species,
-                    test_start == !!test_start)
-    preds <- agg_regions_mvgam(preds_raw) |>
-      dplyr::rename(estimate = Estimate, lower_pi = Q2.5, upper_pi = Q97.5) |>
-      dplyr::select(year, estimate, lower_pi, upper_pi) |>
-      dplyr::arrange(year) |>
-      dplyr::distinct(year, .keep_all = TRUE)
-    
-  } else {
-    preds <- forecasts |>
-      dplyr::filter(.model == !!model, species == !!species,
-                    test_start == !!test_start) |>
-      group_by(year) |>
-      summarise(
-        n_regions = n(),
-        .mean     = sum(.mean, na.rm = TRUE),
-        pred_var  = sum(distributional::variance(count), na.rm = TRUE),
-        .groups   = "drop"
-      ) |>
-      filter(n_regions == max(n_regions)) |>
-      mutate(
-        estimate = .mean,
-        pred_sd  = sqrt(pred_var),
-        lower_pi = pmax(0, .mean - 1.96 * pred_sd),
-        upper_pi = .mean + 1.96 * pred_sd
-      ) |>
-      dplyr::select(year, estimate, lower_pi, upper_pi) |>
-      dplyr::arrange(year) |>
-      dplyr::distinct(year, .keep_all = TRUE)
+  if (is.null(test_start)) {
+    available <- forecasts |>
+      filter(.data[[model_col]] == !!model, species == !!species) |>
+      pull(test_start)
+    if (length(available) == 0) stop("No forecasts for ", species, " - ", model)
+    test_start <- max(available)
   }
   
+  preds <- get_preds(forecasts, model, species, test_start, framework)
   if (nrow(preds) == 0) stop("No forecasts found for ", species, " - ", model)
   
   obs_raw <- data |> as_tibble() |> dplyr::filter(species == !!species)
   obs     <- agg_regions_obs(obs_raw)
   
-  first_pred     <- min(preds$year)
-  historic_start <- ifelse(is.null(historic_start), first_pred - 20, historic_start)
-  max_year       <- max(preds$year)
-  rangex         <- c(historic_start, max_year)
-  rangey         <- c(0, max(c(preds$upper_pi, obs$count), na.rm = TRUE) * 1.1)
-  
-  oldpar <- par(no.readonly = TRUE)
-  on.exit(par(oldpar))
-  
-  par(mar = c(4, 5, 3, 1))
-  plot(1, 1, type = "n", bty = "L",
-       xlab = "Year", ylab = "Count",
-       xlim = rangex, ylim = rangey,
-       cex.lab = 1.5, cex.axis = 1.25, las = 1)
-  title(main = paste0(toupper(species), " - ", model,
-                      " (forecast from ", test_start, ")"), cex.main = 1.25)
-  
-  last_obs_year  <- max(obs$year[obs$year < first_pred & !is.na(obs$count)])
-  last_obs_count <- obs$count[obs$year == last_obs_year]
-  preds$lower_pi <- pmax(0, preds$lower_pi)
-  
-  polygon(
-    c(last_obs_year, preds$year, rev(preds$year), last_obs_year),
-    c(last_obs_count, preds$lower_pi, rev(preds$upper_pi), last_obs_count),
-    col = rgb(0.68, 0.84, 0.9, 0.6), border = NA
-  )
-  points(c(last_obs_year, preds$year), c(last_obs_count, preds$estimate),
-         type = "l", lwd = 2, col = rgb(0.2, 0.5, 0.9))
-  
-  obs_hist <- obs |> dplyr::filter(year < first_pred, !is.na(count))
-  points(obs_hist$year, obs_hist$count, type = "l", lwd = 2, col = "black")
-  points(obs_hist$year, obs_hist$count, pch = 16, col = "white", cex = 1.2)
-  points(obs_hist$year, obs_hist$count, pch = 1,  col = "black", lwd = 2, cex = 1.2)
-  
-  obs_fut <- obs |> dplyr::filter(year >= first_pred, !is.na(count))
-  if (nrow(obs_fut) > 0) {
-    obs_con <- obs |>
-      dplyr::filter(year >= last_obs_year,
-                    year <= max(obs_fut$year), !is.na(count))
-    points(obs_con$year, obs_con$count, type = "l", lwd = 2, col = "black")
-    points(obs_fut$year, obs_fut$count, pch = 16, col = "white", cex = 1.2)
-    points(obs_fut$year, obs_fut$count, pch = 1,  col = "black", lwd = 2, cex = 1.2)
-  }
-  
-  abline(v = first_pred - 0.5, lty = 2, col = "gray50", lwd = 1.5)
-  legend("topleft",
-         legend = c("Observed", "Forecast", "95% PI"),
-         lty    = c(1, 1, NA), lwd = c(2, 2, NA), pch = c(1, NA, 15),
-         col    = c("black", rgb(0.2, 0.5, 0.9), rgb(0.68, 0.84, 0.9, 0.6)),
-         pt.cex = c(1.2, NA, 2), bty = "n", cex = 1.1)
-  
-  invisible(NULL)
+  draw_ts_plot(preds, obs, species, model, test_start,
+               historic_years = if (is.null(historic_start)) 25 else
+                 min(preds$year) - historic_start)
 }
 
 plot_forecast_ts_grid <- function(results, data, models = NULL,
@@ -889,15 +1001,27 @@ plot_forecast_ts_grid <- function(results, data, models = NULL,
   
   if (framework == "mvgam") {
     forecasts <- as_tibble(results$mvgam$forecasts)
+    model_col <- "model"
     if (is.null(models))  models  <- unique(forecasts$model)[1:2]
     if (is.null(species)) species <- unique(forecasts$species)[1:2]
   } else {
     forecasts <- as_tibble(results$fable$forecasts)
+    model_col <- ".model"
     if (is.null(models))  models  <- unique(forecasts$.model)[1:2]
     if (is.null(species)) species <- unique(forecasts$species)[1:2]
   }
   
-  test_start <- max(forecasts$test_start)
+  available_models <- unique(forecasts[[model_col]])
+  models           <- intersect(models, available_models)
+  
+  if (length(models) == 0) {
+    cat("⚠️  None of the requested models found in forecasts\n")
+    return(invisible(NULL))
+  }
+  
+  test_start <- find_valid_test_start(forecasts, models, model_col)
+  cat("  Using test_start:", test_start, "for ts grid\n")
+  
   par(mfrow = c(length(species), length(models)))
   
   for (sp in species) {
