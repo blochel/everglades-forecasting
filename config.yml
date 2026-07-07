@@ -270,48 +270,53 @@ test_colony_subset:
 # Production - system-wide
 production:
   inherits: default
-  
+
   spatial:
     level: all
     run_by_region: false
-  
+
   models:
     mvgam:
       - baseline
       - ar
       - ar_exog
-      - trait                    # Your best models
+      - ar_exog_plus
+      - species_specific
+      - trait
+      - trait2
     fable:
       - baseline
       - arima
+      - tslm
       - arima_exog
-  
+      - gam
+
   run_mvgam: true
   run_fable: true
-  
+
   # Full MCMC
   chains: 4
   burnin: 2000
   samples: 2000
   adapt_delta: 0.99
   max_treedepth: 12
-  
+
   # All CV windows
-  cv_windows: null               # Use all available windows
-  
+  cv_windows: null
+
   # Full parallel
   parallel:
     enabled: true
-    workers: null                # Use all cores
-  
-  # Caching enabled
+    workers: null
+
+  # Caching
   cache:
     data: true
-    models: true                 # Cache models to avoid re-fitting
-  
+    models: true
+
   # Full evaluation
   use_ordinal: true
-  
+
   # All plots
   plots:
     skill_over_time: true
