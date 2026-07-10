@@ -17,6 +17,7 @@ library(zoo)
 
 get_data_water <- function(eden_path = "WaterData", update = FALSE) {
   if (update) {
+    cat("📥 Downloading fresh EDEN water data...\n")
     update_water(eden_path)
     water <- get_eden_covariates(eden_path = eden_path, level = "subregions") |>
       bind_rows(get_eden_covariates(eden_path = eden_path, level = "all")) |>
@@ -27,9 +28,35 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
       pivot_wider(names_from = "variable", values_from = "value") |>
       mutate(year = as.integer(year)) |>
       arrange(year, region)
+    
+    # Save updated covariates
+    write_csv(water, file.path(eden_path, "eden_covariates.csv"))
+    cat(glue::glue(
+      "✓ Water data updated and saved to {eden_path}/eden_covariates.csv\n",
+      "  Years: {min(water$year)}-{max(water$year)}\n",
+      "  Regions: {paste(unique(water$region), collapse = ', ')}\n"
+    ))
+    
   } else {
-    water <- read_csv("WaterData/eden_covariates.csv", show_col_types = FALSE)
+    water_file <- file.path(eden_path, "eden_covariates.csv")
+    
+    if (!file.exists(water_file)) {
+      stop(glue::glue(
+        "Water data file not found: {water_file}\n",
+        "Run get_data_water(update = TRUE) to download fresh data"
+      ))
+    }
+    
+    water <- read_csv(water_file, show_col_types = FALSE)
+    
+    cat(glue::glue(
+      "✓ Water data loaded from: {water_file}\n",
+      "  Years: {min(water$year)}-{max(water$year)}\n",
+      "  Regions: {paste(unique(water$region), collapse = ', ')}\n",
+      "  Last modified: {format(file.info(water_file)$mtime, '%Y-%m-%d')}\n"
+    ))
   }
+  
   return(water)
 }
 
