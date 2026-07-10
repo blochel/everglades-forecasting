@@ -39,3 +39,8 @@ Thumbs.db
 *.bak
 *~
 .positai
+"Rplots.pdf" 
+"*.pdf" 
+".Rhistory" 
+"cache/" 
+"logs/" 
