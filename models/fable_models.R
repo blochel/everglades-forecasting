@@ -1,16 +1,71 @@
+# =============================================================================
+# FABLE MODELS - Classical and regression time series models
+# Fits models and returns raw forecasts + basic accuracy metrics
+# Skill scores and RPS are computed in evaluation.R (consistent with mvgam)
+# =============================================================================
+
 library(fable)
 library(fable.gam)
 library(feasts)
 library(tsibble)
-library(verification)
 library(dplyr)
 
-make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL, 
-                                 use_ordinal = TRUE, config = CONFIG, 
+# =============================================================================
+# HELPER - Ensure correct tsibble structure
+# =============================================================================
+
+ensure_tsibble <- function(data, has_region) {
+  if (is_tsibble(data)) {
+    current_keys  <- key_vars(data)
+    expected_keys <- if (has_region) c("species", "region") else "species"
+    if (setequal(current_keys, expected_keys)) return(data)
+  }
+  
+  df <- as_tibble(data)
+  
+  if (has_region) {
+    as_tsibble(df, key = c(species, region), index = year)
+  } else {
+    as_tsibble(df, key = species, index = year)
+  }
+}
+
+# =============================================================================
+# MAIN FABLE FORECASTING FUNCTION
+# =============================================================================
+
+make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL,
+                                 use_ordinal = TRUE, config = CONFIG,
                                  precomputed_breaks = NULL) {
+  
+  # =========================================================================
+  # SETUP
+  # =========================================================================
+  
   if (is.null(models_to_run)) {
     models_to_run <- c("baseline", "arima", "tslm", "arima_exog", "gam")
   }
+  
+  # Detect spatial level
+  has_region <- "region" %in% names(as_tibble(train_data)) &&
+    length(unique(as_tibble(train_data)$region)) > 1
+  
+  cat(glue::glue(
+    "  Fable spatial: {ifelse(has_region, 'subregion/colony', 'system-wide')}\n"
+  ))
+  
+  # Ensure correct tsibble keys
+  train_data <- ensure_tsibble(train_data, has_region)
+  test_data  <- ensure_tsibble(test_data,  has_region)
+  
+  cat(glue::glue(
+    "  Keys: {paste(key_vars(train_data), collapse = ', ')} | ",
+    "N series: {n_keys(train_data)}\n"
+  ))
+  
+  # =========================================================================
+  # BUILD MODEL SPECIFICATIONS
+  # =========================================================================
   
   model_specs <- character()
   
@@ -22,146 +77,95 @@ make_fable_forecasts <- function(train_data, test_data, models_to_run = NULL,
   }
   if ("tslm" %in% models_to_run) {
     model_specs <- c(model_specs,
-                     "tslm = TSLM(count ~ breed_season_depth + I(breed_season_depth^2) + 
-                   pre_recession + post_recession + recession + dry_days + trend())")
+                     "tslm = TSLM(count ~ breed_season_depth + I(breed_season_depth^2) +
+         pre_recession + post_recession + recession + dry_days + trend())")
   }
   if ("arima_exog" %in% models_to_run) {
     model_specs <- c(model_specs,
-                     "arima_exog = ARIMA(count ~ breed_season_depth + I(breed_season_depth^2) + 
-                          pre_recession + post_recession + recession + dry_days)")
+                     "arima_exog = ARIMA(count ~ breed_season_depth + I(breed_season_depth^2) +
+         pre_recession + post_recession + recession + dry_days)")
   }
   if ("gam" %in% models_to_run) {
     model_specs <- c(model_specs,
                      "gam = fable.gam::GAM(count ~ trend2(k = 4, bs = 'gp') +
-                 xreg(breed_season_depth, smooth = TRUE, k = 5) +
-                 xreg(dry_days, smooth = TRUE, k = 5) +
-                 xreg(recession, smooth = TRUE, k = 4))")
+         xreg(breed_season_depth, smooth = TRUE, k = 5) +
+         xreg(dry_days, smooth = TRUE, k = 5) +
+         xreg(recession, smooth = TRUE, k = 4))")
   }
   
-  model_call_str <- paste0("model(train_data, ",
-                           paste(model_specs, collapse = ", "), ")")
-  models <- tryCatch({
+  if (length(model_specs) == 0) {
+    warning("No valid fable models specified")
+    return(list(tibble(), tibble()))
+  }
+  
+  # =========================================================================
+  # FIT MODELS
+  # =========================================================================
+  
+  model_call_str <- paste0(
+    "model(train_data, ",
+    paste(model_specs, collapse = ", "),
+    ")"
+  )
+  
+  cat(glue::glue("  Fitting {length(model_specs)} fable models...\n"))
+  
+  fitted_models <- tryCatch({
     eval(parse(text = model_call_str))
   }, error = function(e) {
-    warning("Model fitting failed: ", e$message)
+    warning("Fable model fitting failed: ", e$message)
     cat("\nFailed model specs:\n", model_call_str, "\n")
     NULL
   })
   
-  if (is.null(models)) {
-    return(list(forecasts = tibble(), metrics = tibble()))
+  if (is.null(fitted_models)) {
+    return(list(tibble(), tibble()))
   }
   
-  forecasts <- forecast(models, new_data = test_data)
+  cat("  ✓ Models fitted\n")
   
-  evaluations <- evaluate_fable_forecasts(
-    forecasts,
-    test_data,
-    train_data,
-    use_ordinal        = use_ordinal,
-    config             = config,
-    precomputed_breaks = precomputed_breaks
-  )
+  # =========================================================================
+  # GENERATE FORECASTS
+  # =========================================================================
   
-  return(list(forecasts = forecasts, metrics = evaluations))
-}
-
-evaluate_fable_forecasts <- function(forecasts, test_data, train_data = NULL, use_ordinal = TRUE, config = CONFIG, precomputed_breaks = NULL) {
-  # Standard metrics (CRPS, RMSE)
-  metrics <- accuracy(forecasts, test_data, list(crps = CRPS, rmse = RMSE))
+  forecasts_raw <- tryCatch({
+    forecast(fitted_models, new_data = test_data)
+  }, error = function(e) {
+    warning("Fable forecasting failed: ", e$message)
+    NULL
+  })
   
-  baselines <- metrics |> filter(.model == "baseline")
-  join_cols <- c(key_vars(test_data), ".type")
-  
-  metrics <- metrics |>
-    left_join(baselines, by = join_cols, suffix = c("", "_baseline")) |>
-    mutate(
-      crps_skill = 1 - crps / crps_baseline,
-      rmse_skill = 1 - rmse / rmse_baseline
-    ) |>
-    dplyr::select(-.model_baseline)
-  
-  # Ordinal evaluation (RPS)
-  if (use_ordinal && !is.null(train_data)) {
-    rps_metrics <- calculate_rps(forecasts, test_data, train_data, config = config, precomputed_breaks = precomputed_breaks)
-    metrics <- metrics |> left_join(rps_metrics, by = c(".model", "species"))
+  if (is.null(forecasts_raw)) {
+    return(list(tibble(), tibble()))
   }
   
-  return(metrics)
-}
-
-calculate_rps <- function(forecasts, test_data, train_data, config = CONFIG, precomputed_breaks = NULL) {
-  # Use precomputed breaks (full dataset) or compute from training window
-  if (!is.null(precomputed_breaks)) {
-    quantiles_by_species <- precomputed_breaks
-  } else {
-    quantiles_by_species <- train_data |>
-      as_tibble() |>
-      filter_ordinal_years(config$ordinal_years) |>
-      group_by(species) |>
-      summarise(
-        low = quantile(count, config$ordinal_breaks[1], na.rm = TRUE),
-        medium = quantile(count, config$ordinal_breaks[2], na.rm = TRUE),
-        high = quantile(count, config$ordinal_breaks[3], na.rm = TRUE),
-        .groups = "drop"
-      )
+  cat(glue::glue("  ✓ Forecasts: {nrow(forecasts_raw)} rows\n"))
+  
+  # =========================================================================
+  # BASIC ACCURACY METRICS (CRPS, RMSE)
+  # Skill scores and RPS computed in evaluation.R
+  # =========================================================================
+  
+  raw_metrics <- tryCatch({
+    accuracy(forecasts_raw, test_data, list(crps = CRPS, rmse = RMSE))
+  }, error = function(e) {
+    warning("Fable accuracy() failed: ", e$message)
+    NULL
+  })
+  
+  if (is.null(raw_metrics) || nrow(raw_metrics) == 0) {
+    warning("No fable metrics computed")
+    return(list(forecasts_raw, tibble()))
   }
   
-  forecasts_probs <- forecasts |>
-    as_tibble() |>
-    left_join(quantiles_by_species, by = "species") |>
-    rowwise() |>
-    mutate(
-      var = variance(count),
-      prob_low = pnorm(low, mean = .mean, sd = sqrt(var)),
-      prob_medium = pnorm(medium, mean = .mean, sd = sqrt(var)) - prob_low,
-      prob_high = pnorm(high, mean = .mean, sd = sqrt(var)) - pnorm(medium, mean = .mean, sd = sqrt(var)),
-      prob_very_high = 1 - pnorm(high, mean = .mean, sd = sqrt(var))
-    ) |>
-    ungroup()
+  cat(glue::glue("  ✓ Metrics: {nrow(raw_metrics)} rows\n"))
   
-  test_data_ordinal <- test_data |>
-    as_tibble() |>
-    left_join(quantiles_by_species, by = "species") |>
-    rowwise() |>
-    mutate(
-      count_category = cut(count,
-                           breaks = c(-Inf, low, medium, high, Inf),
-                           labels = c("Low", "Medium", "High", "Very High"),
-                           ordered = TRUE)
-    ) |>
-    ungroup()
-  
-  rps_by_model <- forecasts_probs |>
-    group_by(.model, species) |>
-    summarise(
-      rps = {
-        current_species <- unique(species)
-        obs_species <- test_data_ordinal |>
-          filter(species == current_species) |>
-          pull(count_category) |>
-          as.numeric()
-        prob_matrix <- pick(prob_low, prob_medium, prob_high, prob_very_high) |>
-          base::as.matrix()
-        mean(verification::rps(obs_species, prob_matrix)$rps)
-      },
-      .groups = "drop"
-    )
-  
-  baseline_rps <- rps_by_model |>
-    filter(.model == "baseline") |>
-    dplyr::select(species, rps_baseline = rps)
-  
-  rps_by_model |>
-    left_join(baseline_rps, by = "species") |>
-    mutate(rps_skill = 1 - rps / rps_baseline)
+  return(list(forecasts_raw, raw_metrics))
 }
 
 
 
-
-
-
+cat("✓ fable_models.R loaded\n")
 
 
 
