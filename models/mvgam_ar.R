@@ -1,5 +1,6 @@
 fit_mvgam_ar <- function(train_data, test_data, config) {
   cat("  Fitting AR model...\n")
+  
   tryCatch({
     model <- mvgam(
       formula = count ~ series,
@@ -12,19 +13,13 @@ fit_mvgam_ar <- function(train_data, test_data, config) {
       samples = config$samples
     )
     
-    preds <- predict(model, newdata = test_data) %>%
-      as_tibble() %>%
-      mutate(
-        species = test_data$species,
-        year = test_data$year,
-        model = "ar"
-      )
-    
     fc <- forecast(model, newdata = test_data)
     crps <- extract_crps_mvgam(fc, model_name = "ar")
     
-    return(list(preds = preds, crps = crps))
+    return(list(fc = fc, crps = crps))
+    
   }, error = function(e) {
+    cat("  ✗ AR model failed\n")
     warning("AR model failed: ", e$message)
     return(NULL)
   })

@@ -29,6 +29,7 @@ results/
 # Data folders to exclude
 EvergladesWadingBird/
 WaterData/
+logs/
 
 # System files
 .DS_Store
