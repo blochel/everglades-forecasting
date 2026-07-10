@@ -1008,7 +1008,7 @@ plot_forecast_ts_grid <- function(results, data, models = NULL,
     forecasts <- as_tibble(results$fable$forecasts)
     model_col <- ".model"
     if (is.null(models))  models  <- unique(forecasts$.model)[1:2]
-    if (is.null(species)) species <- unique(forecasts$species)[1:2]
+    # if (is.null(species)) species <- unique(forecasts$species)[1:2]
   }
   
   available_models <- unique(forecasts[[model_col]])
