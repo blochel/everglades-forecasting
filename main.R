@@ -1,5 +1,5 @@
 # =============================================================================
-# MAIN.R - Wading Bird Forecasting Pipeline
+# MAIN.R - Wading Bird Forecasting Pipeline ----
 # Optimized for parallel processing and organized output folders
 # =============================================================================
 
