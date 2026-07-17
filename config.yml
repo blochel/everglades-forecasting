@@ -9,6 +9,9 @@ default:
   # Spatial configuration
   spatial:
     level: subregion                    # "all", "subregion", "colony"
+    forecast_totals: false              # species or total
+    include_species: "top6"             # "top6", "all", or a list like ["wost", "whib", "anhi"]
+    include_unknowns: true              # keeps unkn, smwh, lawh, etc.
     fill_missing: true
     fill_value: 0
     min_years_required: 10
@@ -36,7 +39,7 @@ default:
       - gam
   
   # Execution control
-  run_mvgam: true
+  run_mvgam: false
   run_fable: true
 
   # Evaluation settings
@@ -53,12 +56,12 @@ default:
   test_years: 2
   cv_windows: null              # null = all windows, or set number to limit
 
-  # Parallel processing (NEW!)
+  # Parallel processing 
   parallel:
     enabled: true
     workers: null                # null = auto-detect cores
 
-  # Caching (NEW!)
+  # Caching
   cache:
     data: true
     models: false                # Set to true to cache fitted models
@@ -66,18 +69,16 @@ default:
 
   # MCMC settings (mvgam)
   chains: 4
-  burnin: 1500
-  samples: 1500
+  burnin: 2000
+  samples: 2000
   adapt_delta: 0.95              # Stan tuning (higher = more accurate but slower)
   max_treedepth: 10              # Stan tuning
 
   # Plotting options
   plots:
-    skill_over_time: true
-    best_model_counts: true
-    forecast_timeseries: false
-    ts_models: ["baseline", "ar"]
-    ts_species: ["gbhe", "greg", "rosp"]
+    forecast_timeseries: true
+    ts_models: ["baseline", "ar", "trait"]
+    ts_species: ["gbhe", "greg", "rosp", "wost", "whib", "sneg"]
 
 # -----------------------------------------------------------------------------
 # TESTING CONFIGURATIONS (Fast iterations for development)
@@ -91,8 +92,8 @@ testing:
   models:
     mvgam:
       - baseline
-      - trait                    # Test your best model
-    fable: []                    # Skip fable for speed
+      - trait                    
+    fable: []                    
   
   run_mvgam: true
   run_fable: false
@@ -658,3 +659,99 @@ quick_test_subregion:
   cache:
     data: true
     models: false
+    
+    
+test_totals:
+  inherits: default
+  
+  spatial:
+    level: all
+    forecast_totals: true
+    include_species: "all"          # ← Use ALL species for totals
+    include_unknowns: true         # ← Exclude generic codes
+    
+  models:
+    fable:
+      - baseline
+      - arima
+      - tslm
+      - arima_exog
+      - gam
+      
+  run_mvgam: false
+  run_fable: true                   # ← ENABLE FABLE
+  
+  chains: 1
+  burnin: 250
+  samples: 250
+  cv_windows: 2
+  
+  use_ordinal: false                # ← Faster for testing
+  
+  parallel:
+    enabled: false
+    
+  cache:
+    data: true
+    models: false
+  
+  # ADD COMPLETE PLOTS SECTION:
+  plots:
+    forecast_timeseries: true       # ← Enable time series plots
+    skill_over_time: true
+    best_model_counts: true
+    ts_models: ["baseline", "arima", "tslm"]
+    ts_species: ["Total"]           # ← CRITICAL: Plot "Total" not top6
+    
+    
+    
+run_all_scales_all:
+  inherits: default
+
+  spatial:
+    include_species: "top6"        # Top 6 species
+    include_unknowns: false
+    min_years_required: 10
+
+  models:
+    mvgam:
+      - baseline
+      - ar
+      - ar_exog
+      - ar_exog_plus
+      - species_specific
+      - trait
+      - trait2
+    fable:
+      - baseline
+      - arima
+      - tslm
+      - arima_exog
+      - gam
+  run_mvgam: true
+  run_fable: true
+  # Full MCMC
+  chains: 4
+  burnin: 2000
+  samples: 2000
+  adapt_delta: 0.99
+  max_treedepth: 12
+  # All CV windows
+  cv_windows: null
+  # Full parallel
+  parallel:
+    enabled: true
+    workers: null
+  # Caching
+  cache:
+    data: true
+    models: true
+  # Full evaluation
+  use_ordinal: true
+  # All plots
+  plots:
+    skill_over_time: true
+    best_model_counts: true
+    forecast_timeseries: true
+    ts_models: ["baseline", "ar", "trait"]
+    ts_species: ["gbhe", "greg", "rosp", "wost", "whib", "sneg"]
