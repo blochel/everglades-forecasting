@@ -8,7 +8,7 @@ fit_mvgam_ar_exog <- function(train_data, test_data, config) {
         recession + dry_days,
       trend_model = mvgam::AR(p = 1),
       data = train_data,
-      family = nb(),
+      family = model_family,
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples

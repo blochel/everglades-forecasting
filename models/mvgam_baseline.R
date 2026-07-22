@@ -9,7 +9,7 @@ fit_mvgam_baseline <- function(train_data, test_data, config) {
       #this might want to be modefied? 
       #check fable null model... 
       data = train_data,
-      family = nb(),
+      family = model_family,
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples

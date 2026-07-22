@@ -72,7 +72,7 @@ fit_mvgam_trait2 <- function(train_data, test_data, config) {
       
       trend_model = mvgam::AR(p = 1),
       data = train_enriched,
-      family = nb(),
+      family = model_family,
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples,

@@ -68,6 +68,7 @@ default:
     force_refit: false           # Force refit even if cache exists
 
   # MCMC settings (mvgam)
+  family: "poisson"
   chains: 4
   burnin: 2000
   samples: 2000

@@ -7,7 +7,7 @@ fit_mvgam_ar <- function(train_data, test_data, config) {
       trend_formula = ~ s(breed_season_depth) + s(dry_days) + s(recession),
       trend_model = mvgam::AR(p = 1),  
       data = train_data,
-      family = nb(),
+      family = model_family,
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples

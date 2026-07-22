@@ -12,7 +12,7 @@ fit_mvgam_species_specific <- function(train_data, test_data, config) {
       trend_model = mvgam::AR(),
       noncentred = TRUE,
       data = train_data,
-      family = nb(),
+      family = model_family,
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples

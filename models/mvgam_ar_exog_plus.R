@@ -14,7 +14,7 @@ fit_mvgam_ar_exog_plus <- function(train_data, test_data, config) {
         ti(init_depth, dry_days, bs = 'cr', k = 5),
       trend_model = mvgam::AR(),
       data = train_data,
-      family = nb(),
+      family = model_family,
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples
