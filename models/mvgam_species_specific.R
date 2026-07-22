@@ -19,7 +19,7 @@ fit_mvgam_species_specific <- function(train_data, test_data, config) {
       trend_formula = ~
         s(breed_season_depth, bs = 'cr', k = 5) +
         s(dry_days, bs = 'cr', k = 5) +
-        s(breed_season_depth, by = trend, bs = 'fs', k = 4) +
+        s(breed_season_depth, by = trend, bs = 'sz', xt = list(bs = 'cr'),, k = 4) +
         s(dry_days, by = trend, bs = 'fs', k = 4),
       trend_model = mvgam::AR(),
       noncentred = TRUE,
