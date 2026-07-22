@@ -34,6 +34,16 @@ fit_mvgam_trait <- function(train_data, test_data, config) {
   # FIT MODEL
   # =========================================================================
   
+  model_family <- if (is.null(config$family)) {
+    NA
+  } else if (config$family == "poisson") {
+    poisson()
+  } else if (config$family == "nb") {
+    nb()
+  } else {
+    NA
+  }
+  
   tryCatch({
     model <- mvgam(
       formula = count ~ series,

@@ -1,6 +1,17 @@
 fit_mvgam_baseline <- function(train_data, test_data, config) {
   cat("  Fitting baseline model...\n")
   
+  model_family <- if (is.null(config$family)) {
+    NA
+  } else if (config$family == "poisson") {
+    poisson()
+  } else if (config$family == "nb") {
+    nb()
+  } else {
+    NA
+  }
+  
+  
   tryCatch({
     model <- mvgam(
       formula = count ~ 1,           
