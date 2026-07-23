@@ -7,20 +7,22 @@ fit_mvgam_baseline <- function(train_data, test_data, config) {
     poisson()
   } else if (config$family == "nb") {
     nb()
+  } else if (config$family == "gaussian") {
+    gaussian()
   } else {
     NA
   }
-  
   
   tryCatch({
     model <- mvgam(
       formula = count ~ 1,           
       trend_model = RW(),            
       #trend_model = RW() — This makes it a proper random walk baseline (the time-series equivalent of "just predict tomorrow will be like today")
-      #this might want to be modefied? 
-      #check fable null model... 
+      #this might want to be modified? 
       data = train_data,
       family = model_family,
+      noncentred = TRUE,
+      control = list(adapt_delta = 0.99, max_treedepth = 12),   
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples

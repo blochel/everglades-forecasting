@@ -8,6 +8,8 @@ fit_mvgam_ar_exog <- function(train_data, test_data, config) {
     poisson()
   } else if (config$family == "nb") {
     nb()
+  } else if (config$family == "gaussian") {
+    gaussian()
   } else {
     NA
   }
@@ -21,6 +23,8 @@ fit_mvgam_ar_exog <- function(train_data, test_data, config) {
       trend_model = mvgam::AR(p = 1),
       data = train_data,
       family = model_family,
+      noncentred = TRUE,
+      control = list(adapt_delta = 0.99, max_treedepth = 12),
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples

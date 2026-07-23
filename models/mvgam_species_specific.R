@@ -8,10 +8,11 @@ fit_mvgam_species_specific <- function(train_data, test_data, config) {
     poisson()
   } else if (config$family == "nb") {
     nb()
+  } else if (config$family == "gaussian") {
+    gaussian()
   } else {
     NA
   }
-  
   
   tryCatch({
     model <- mvgam(
@@ -23,6 +24,7 @@ fit_mvgam_species_specific <- function(train_data, test_data, config) {
         s(dry_days, by = trend, bs = 'fs', k = 4),
       trend_model = mvgam::AR(),
       noncentred = TRUE,
+      control = list(adapt_delta = 0.99, max_treedepth = 12),
       data = train_data,
       family = model_family,
       chains = config$chains,

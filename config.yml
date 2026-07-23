@@ -68,7 +68,7 @@ default:
     force_refit: false           # Force refit even if cache exists
 
   # MCMC settings (mvgam)
-  family: "poisson"
+  family: "nb"
   chains: 4
   burnin: 2000
   samples: 2000
@@ -687,7 +687,7 @@ test_totals:
   # CV settings
   train_years: 20
   test_years: 2
-  cv_windows: null                 # null = all windows
+  cv_windows: null                 
   # MCMC settings
   chains: 4
   burnin: 1500
@@ -697,7 +697,46 @@ test_totals:
     enabled: true
     workers: null                  # Auto-detect
     
-    
+test_totals_mvgam:
+  # Aggregate all species into Total
+  spatial:
+    level: all
+    forecast_totals: true          # Aggregates to Total
+    include_species: all
+    include_unknowns: true
+  
+  family: "gaussian"
+  
+  # Models compatible with Total counts
+  models:
+    mvgam: 
+      - baseline
+      - ar_exog
+      - ar_exog_plus
+      # Note: species_specific, trait, trait2 auto-excluded for totals
+      
+  run_mvgam: true      
+  run_fable: false     
+  
+  # Evaluation
+  use_ordinal: true
+  ordinal_breaks: [0.33, 0.50, 0.67]
+  sliding_window_breaks: true
+  
+  # CV settings
+  train_years: 20
+  test_years: 2
+  cv_windows: 3        # Start with just 3 windows for testing
+  
+  # MCMC settings (safer defaults to avoid crashes)
+  chains: 2            # Fewer chains for faster testing
+  burnin: 1000
+  samples: 1000
+  
+  # Performance
+  parallel:
+    enabled: false     # Disable for easier debugging
+    workers: null    
     
 run_all_scales_all:
   inherits: default

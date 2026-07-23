@@ -87,7 +87,10 @@ fit_mvgam_trait2 <- function(train_data, test_data, config) {
       chains = config$chains,
       burnin = config$burnin,
       samples = config$samples,
-      priors = prior(normal(0, 2), class = 'b')
+      priors = prior(normal(0, 2), class = 'b'),
+      
+      noncentred = TRUE,
+      control = list(adapt_delta = 0.99, max_treedepth = 12)
     )
     
     fc <- forecast(model, newdata = test_enriched)
