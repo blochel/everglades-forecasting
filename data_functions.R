@@ -14,7 +14,6 @@ library(zoo)
 # =============================================================================
 # WATER DATA
 # =============================================================================
-
 get_data_water <- function(eden_path = "WaterData", update = FALSE) {
   if (update) {
     cat("📥 Downloading fresh EDEN water data...\n")
@@ -63,7 +62,6 @@ get_data_water <- function(eden_path = "WaterData", update = FALSE) {
 # =============================================================================
 # MAIN DATA LOADING (with caching support)
 # =============================================================================
-
 get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
   
   level        <- config$spatial$level
@@ -79,7 +77,7 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
     # Generate cache key based on config
     cache_key <- digest::digest(list(
       level = level,
-      forecast_totals = config$spatial$forecast_totals %||% FALSE, 
+      forecast_totals = config$spatial$forecast_totals %||% FALSE,
       include_species = config$spatial$include_species %||% "top6",
       fill_missing = fill_missing,
       fill_value = fill_value,
@@ -117,7 +115,7 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
   
   # Filter species based on config
   if (length(species_pref) == 1 && species_pref == "top6") {
-    counts <- counts |> 
+    counts <- counts |>
       filter(species %in% c("gbhe", "greg", "rosp", "sneg", "wost", "whib"))
     
   } else if (length(species_pref) == 1 && species_pref == "all") {
@@ -125,22 +123,23 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
     # 'all' but NO unknowns, filter the generic codes out
     if (!include_unknowns) {
       generic_codes <- c("unkn", "lada", "lawh", "smda", "smhe", "smwh")
-      counts <- counts |> 
+      counts <- counts |>
         filter(!species %in% generic_codes)
     }
     # If include_unknowns is TRUE -> keep everything!
     
   } else {
     # Assume custom list in the yaml (e.g., ["wost", "anhi", "unkn"])
-    counts <- counts |> 
+    counts <- counts |>
       filter(species %in% species_pref)
   }
   
   water <- get_data_water()
+  
   # ==========================================================================
-  # ALL (system-wide)
+  # SYSTEM (system-wide)
   # ==========================================================================
-  if (level == "all") {
+  if (level == "system") {
     
     if (fill_missing) {
       counts <- counts |>
@@ -253,9 +252,9 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
       counts <- counts |>
         ungroup() |>
         complete(
-          year = full_seq(year, 1), 
+          year = full_seq(year, 1),
           tidyr::nesting(colony, subregion),
-          species, 
+          species,
           fill = list(count = fill_value)
         )
     }
@@ -277,7 +276,7 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
   } else {
     stop(glue::glue(
       "Spatial level '{level}' not recognized. ",
-      "Use 'all', 'subregion', or 'colony'."
+      "Use 'system', 'subregion', or 'colony'."
     ))
   }
   
@@ -297,7 +296,6 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
   } else {
     cat("✅ No missing values in numeric columns\n")
   }
-  
   
   # ==========================================================================
   # AGGREGATE TO TOTALS (If configured)
@@ -335,10 +333,9 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
     }
   }
   
-  
   # Attach metadata
   attr(combined, "spatial_level") <- level
-  attr(combined, "spatial_units") <- if (level == "all") {
+  attr(combined, "spatial_units") <- if (level == "system") {
     "system-wide"
   } else {
     unique(combined$region)
@@ -349,7 +346,7 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
     "\n✅ Loaded data at '{level}' level: {nrow(combined)} observations\n"
   ))
   
-  if (level != "all") {
+  if (level != "system") {
     cat(glue::glue(
       "   Spatial units: {paste(unique(combined$region), collapse = ', ')}\n"
     ))
