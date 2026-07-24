@@ -8,7 +8,7 @@
 default:
   # Spatial configuration
   spatial:
-    level: subregion                    # "system", "subregion", "colony"
+    level: system                       # "system", "subregion", "colony"
     forecast_totals: false              # species or total
     include_species: "top6"             # "top6", "all", or a list like ["wost", "whib", "anhi"]
     include_unknowns: true              # keeps unkn, smwh, lawh, etc.

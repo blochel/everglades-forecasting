@@ -10,6 +10,12 @@ library(zoo)
 
 # Helper function
 `%||%` <- function(x, y) if (is.null(x)) y else x
+# Helper to translate config level to wader level
+translate_level_for_wader <- function(level) {
+  if (level == "system") return("all")
+  return(level)
+}
+
 
 # =============================================================================
 # WATER DATA
@@ -111,7 +117,9 @@ get_wading_bird_data <- function(config, path = ".", cache = TRUE) {
   include_unknowns <- config$spatial$include_unknowns %||% FALSE
   
   # Load raw counts
-  counts <- tibble(max_counts(level = level, path = path))
+  # Translate "system" -> "all" for wader compatibility
+  wader_level <- translate_level_for_wader(level)
+  counts <- tibble(max_counts(level = wader_level, path = path))
   
   # Filter species based on config
   if (length(species_pref) == 1 && species_pref == "top6") {
