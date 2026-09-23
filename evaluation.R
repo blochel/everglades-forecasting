@@ -5,6 +5,11 @@
 # Consistent evaluation for both mvgam and fable frameworks
 # =============================================================================
 
+# NOTE: config is intentionally NOT loaded with library() here.
+# All config access uses config::get() explicitly to avoid conflicted
+# flagging the get() ambiguity between config::get and base::get,
+# which breaks furrr's internal function lookup in parallel workers.
+
 library(dplyr)
 library(tidyr)
 library(verification)
@@ -12,6 +17,7 @@ library(distributional)
 library(future)
 library(furrr)
 library(progressr)
+
 
 # =============================================================================
 # PARALLEL PROCESSING

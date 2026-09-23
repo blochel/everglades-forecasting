@@ -32,7 +32,6 @@ print_banner("WADING BIRD FORECASTING PIPELINE")
 cat("Starting at:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
 
 suppressPackageStartupMessages({
-  library(config)
   library(conflicted)
   library(distributional)
   library(dplyr)
@@ -47,14 +46,12 @@ suppressPackageStartupMessages({
   library(furrr)
   library(progressr)
 })
-
 # Handle namespace conflicts
 conflict_prefer("filter",    "dplyr")
 conflict_prefer("select",    "dplyr")
 conflict_prefer("AR",        "mvgam")
 conflict_prefer("VAR",       "mvgam")
 conflict_prefer("RW",        "mvgam")
-conflict_prefer("get",       "base")
 conflict_prefer("as.matrix", "base")
 
 # =============================================================================
